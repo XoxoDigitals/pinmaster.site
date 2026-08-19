@@ -83,6 +83,6 @@ Each step is a separate queued job with retries (stored in PostgreSQL `JobRun`).
 | Admin Settings (`AppConfig`) | Google Cloud OAuth Client ID/Secret/Redirect URI and Pinterest App ID/Secret/Redirect URI |
 | Each user’s Settings | OpenRouter, Google AI Studio vault, SnapGen (and other AI/model keys). Not shared across users. |
 | `DATABASE_URL` | PostgreSQL |
-| `NEXTAUTH_SECRET` | Session signing |
+| `AUTH_SECRET` (or `NEXTAUTH_SECRET`) | Session signing. Use one stable value in production; changing it invalidates JWTs |
 | `ENCRYPTION_KEY` | Encrypt stored API keys |
 | `R2_*` | Public image hosting (optional if image API returns public URLs) |

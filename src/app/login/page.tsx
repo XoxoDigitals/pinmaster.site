@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth, signIn } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { SiteFooter } from "@/components/SiteFooter";
+import { LoginForm } from "./login-form";
 
 export default async function LoginPage({
   searchParams,
@@ -12,21 +13,6 @@ export default async function LoginPage({
   if (session?.user) redirect("/dashboard");
 
   const params = await searchParams;
-
-  async function loginAction(formData: FormData) {
-    "use server";
-    const email = String(formData.get("email") || "");
-    const password = String(formData.get("password") || "");
-    try {
-      await signIn("credentials", {
-        email,
-        password,
-        redirectTo: "/dashboard",
-      });
-    } catch (error) {
-      throw error;
-    }
-  }
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", flexDirection: "column" }}>
@@ -75,49 +61,7 @@ export default async function LoginPage({
           Access Blogger, Pinterest, and AI publishing.
         </p>
 
-        {params.error && (
-          <p
-            style={{
-              marginTop: 16,
-              background: "rgba(230,0,35,0.1)",
-              color: "var(--pin)",
-              padding: "0.75rem 1rem",
-              borderRadius: 12,
-              fontSize: 14,
-              fontWeight: 500,
-            }}
-          >
-            Invalid email or password.
-          </p>
-        )}
-
-        <form action={loginAction} className="surface" style={{ marginTop: 32, padding: 24, display: "grid", gap: 16 }}>
-          <label style={{ display: "grid", gap: 8, fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>
-            Email
-            <input
-              className="input-field"
-              name="email"
-              type="email"
-              required
-              defaultValue="admin@example.com"
-              style={{ fontWeight: 400 }}
-            />
-          </label>
-          <label style={{ display: "grid", gap: 8, fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>
-            Password
-            <input
-              className="input-field"
-              name="password"
-              type="password"
-              required
-              defaultValue="changeme123"
-              style={{ fontWeight: 400 }}
-            />
-          </label>
-          <button type="submit" className="btn-primary" style={{ width: "100%" }}>
-            Sign in
-          </button>
-        </form>
+        <LoginForm initialError={params.error} />
 
         <p style={{ marginTop: 20, fontSize: 13, color: "var(--ink-soft)" }}>
           Default after seed: admin@example.com / changeme123
