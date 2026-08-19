@@ -14,7 +14,7 @@ Centralized dashboard to crawl reference sitemaps, rewrite articles with OpenRou
 
 ## Quick start
 
-1. Copy env and fill keys:
+1. Copy env and set database, NextAuth, and encryption keys:
 
 ```bash
 cp .env.example .env
@@ -78,11 +78,11 @@ Each step is a separate queued job with retries (stored in PostgreSQL `JobRun`).
 
 ## Required credentials
 
-| Variable | Purpose |
+| Where | Purpose |
 |----------|---------|
-| `GOOGLE_CLIENT_ID` / `SECRET` | Blogger OAuth |
-| `PINTEREST_APP_ID` / `SECRET` | Pinterest OAuth |
-| `OPENROUTER_API_KEY` | Rewrites + images |
-| `R2_*` | Public image hosting (optional if image API returns public URLs) |
+| Admin Settings (`AppConfig`) | Google Cloud OAuth Client ID/Secret/Redirect URI and Pinterest App ID/Secret/Redirect URI |
+| Each user’s Settings | OpenRouter, Google AI Studio vault, SnapGen (and other AI/model keys). Not shared across users. |
+| `DATABASE_URL` | PostgreSQL |
 | `NEXTAUTH_SECRET` | Session signing |
 | `ENCRYPTION_KEY` | Encrypt stored API keys |
+| `R2_*` | Public image hosting (optional if image API returns public URLs) |

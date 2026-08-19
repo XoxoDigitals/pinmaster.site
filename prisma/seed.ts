@@ -61,16 +61,15 @@ async function main() {
     await prisma.appConfig.create({
       data: {
         id: "default",
-        googleClientId: fromSettings?.googleClientId || process.env.GOOGLE_CLIENT_ID || null,
+        googleClientId: fromSettings?.googleClientId || null,
         googleClientSecret: fromSettings?.googleClientSecret || null,
-        googleRedirectUri: fromSettings?.googleRedirectUri || process.env.GOOGLE_REDIRECT_URI || null,
-        pinterestAppId: fromSettings?.pinterestAppId || process.env.PINTEREST_APP_ID || null,
+        googleRedirectUri: fromSettings?.googleRedirectUri || null,
+        pinterestAppId: fromSettings?.pinterestAppId || null,
         pinterestAppSecret: fromSettings?.pinterestAppSecret || null,
-        pinterestRedirectUri:
-          fromSettings?.pinterestRedirectUri || process.env.PINTEREST_REDIRECT_URI || null,
+        pinterestRedirectUri: fromSettings?.pinterestRedirectUri || null,
       },
     });
-    console.log("AppConfig created (OAuth app keys migrated from AiSettings/env if present).");
+    console.log("AppConfig created (OAuth app keys migrated from AiSettings if present).");
   }
 }
 

@@ -43,21 +43,23 @@ async function publicSettings(
   isAdmin: boolean
 ) {
   const googleKeys = decryptGoogleAiKeys(settings.googleAiStudioKeys);
+  const appConfig = await ensureAppConfig();
   const google = await getGoogleAppCredentials();
   const pinterest = await getPinterestAppCredentials();
-  const appConfig = await ensureAppConfig();
   const base = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
   const oauth = isAdmin
     ? {
-        googleClientId: safeClientId(google.clientId),
+        googleClientId: safeClientId(appConfig.googleClientId),
         googleClientSecret: maskSecret(appConfig.googleClientSecret),
         googleRedirectUri:
-          google.redirectUri || `${base}/api/oauth/google/callback`,
-        pinterestAppId: pinterest.appId,
+          (appConfig.googleRedirectUri || "").trim() ||
+          `${base}/api/oauth/google/callback`,
+        pinterestAppId: (appConfig.pinterestAppId || "").trim(),
         pinterestAppSecret: maskSecret(appConfig.pinterestAppSecret),
         pinterestRedirectUri:
-          pinterest.redirectUri || `${base}/api/oauth/pinterest/callback`,
+          (appConfig.pinterestRedirectUri || "").trim() ||
+          `${base}/api/oauth/pinterest/callback`,
       }
     : {
         googleClientId: "",

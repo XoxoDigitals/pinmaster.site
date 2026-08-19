@@ -36,38 +36,36 @@ export async function ensureAppConfig() {
   });
 }
 
+function siteBaseUrl() {
+  return process.env.NEXTAUTH_URL || "http://localhost:3000";
+}
+
+/** Google Cloud OAuth app — AppConfig (admin Settings) only. No .env fallback. */
 export async function getGoogleAppCredentials(
   _userId?: string | null
 ): Promise<GoogleAppCredentials> {
   const config = await prisma.appConfig.findUnique({ where: { id: APP_CONFIG_ID } });
 
   return {
-    clientId: config?.googleClientId || process.env.GOOGLE_CLIENT_ID || "",
-    clientSecret:
-      maybeDecrypt(config?.googleClientSecret) ||
-      process.env.GOOGLE_CLIENT_SECRET ||
-      "",
+    clientId: (config?.googleClientId || "").trim(),
+    clientSecret: maybeDecrypt(config?.googleClientSecret),
     redirectUri:
-      config?.googleRedirectUri ||
-      process.env.GOOGLE_REDIRECT_URI ||
-      `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/oauth/google/callback`,
+      (config?.googleRedirectUri || "").trim() ||
+      `${siteBaseUrl()}/api/oauth/google/callback`,
   };
 }
 
+/** Pinterest developer app — AppConfig (admin Settings) only. No .env fallback. */
 export async function getPinterestAppCredentials(
   _userId?: string | null
 ): Promise<PinterestAppCredentials> {
   const config = await prisma.appConfig.findUnique({ where: { id: APP_CONFIG_ID } });
 
   return {
-    appId: config?.pinterestAppId || process.env.PINTEREST_APP_ID || "",
-    appSecret:
-      maybeDecrypt(config?.pinterestAppSecret) ||
-      process.env.PINTEREST_APP_SECRET ||
-      "",
+    appId: (config?.pinterestAppId || "").trim(),
+    appSecret: maybeDecrypt(config?.pinterestAppSecret),
     redirectUri:
-      config?.pinterestRedirectUri ||
-      process.env.PINTEREST_REDIRECT_URI ||
-      `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/oauth/pinterest/callback`,
+      (config?.pinterestRedirectUri || "").trim() ||
+      `${siteBaseUrl()}/api/oauth/pinterest/callback`,
   };
 }

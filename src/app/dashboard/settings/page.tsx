@@ -541,7 +541,7 @@ function SettingsForm() {
             value={settings.openRouterKey}
             onChange={(v) => setSettings((s) => ({ ...s, openRouterKey: v }))}
             placeholder="sk-or-v1-…"
-            hint="Used for LLM rewrite and optional image generation."
+            hint="Your personal key for LLM rewrite and optional image generation. Not shared with other users."
           />
         </Panel>
 
@@ -711,7 +711,13 @@ function SettingsForm() {
           </div>
           <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--ink-soft)" }}>
             Shared Google Cloud OAuth app. Every user connects their own Google/Blogger account with this app.
+            Keys are stored here only — they are not read from <code>.env</code>.
           </p>
+          {!settings.hasGoogleKeys && (
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--pin)", fontWeight: 600 }}>
+              Add Client ID and Client Secret below. Connect Google will not work until these are saved in Settings.
+            </p>
+          )}
           <div style={{ display: "grid", gap: 14 }}>
             {field("googleClientId", "Client ID", {
               placeholder: "1234567890-xxxxx.apps.googleusercontent.com",
@@ -737,6 +743,14 @@ function SettingsForm() {
             <h2 style={sectionTitle}>Pinterest OAuth</h2>
             <StatusBadge ok={settings.hasPinterestKeys} />
           </div>
+          <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--ink-soft)" }}>
+            Shared Pinterest developer app. Keys are stored here only — they are not read from <code>.env</code>.
+          </p>
+          {!settings.hasPinterestKeys && (
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--pin)", fontWeight: 600 }}>
+              Add App ID and App Secret below. Connect Pinterest will not work until these are saved in Settings.
+            </p>
+          )}
           <div style={{ display: "grid", gap: 14 }}>
             {field("pinterestAppId", "App ID", {
               placeholder: "148…",
@@ -761,10 +775,10 @@ function SettingsForm() {
           <Panel>
             <h2 style={{ ...sectionTitle, marginBottom: 8 }}>Google & Pinterest apps</h2>
             <p style={{ margin: 0, fontSize: 13, color: "var(--ink-soft)" }}>
-              OAuth app credentials are configured by an admin. Connect your own Google/Blogger and Pinterest
-              accounts from the Blogger and Pinterest pages. Status:{" "}
-              {settings.hasGoogleKeys ? "Google app ready" : "Google app not configured"} ·{" "}
-              {settings.hasPinterestKeys ? "Pinterest app ready" : "Pinterest app not configured"}.
+              OAuth app credentials are configured by an admin in Settings. You only connect your own
+              Google/Blogger and Pinterest accounts. Status:{" "}
+              {settings.hasGoogleKeys ? "Google app ready" : "Google app not configured — ask an admin to add keys in Settings"} ·{" "}
+              {settings.hasPinterestKeys ? "Pinterest app ready" : "Pinterest app not configured — ask an admin to add keys in Settings"}.
             </p>
           </Panel>
         )}
