@@ -1,0 +1,376 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  role         UserRole @default(USER)
+  disabled     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  googleAccounts    GoogleAccount[]
+  pinterestAccounts PinterestAccount[]
+  sitemapSources    SitemapSource[]
+  aiSettings        AiSettings?
+  articles          Article[]
+  jobRuns           JobRun[]
+  pins              PinRecord[]
+}
+
+model GoogleAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  email        String
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  scopes       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blogs BloggerBlog[]
+
+  @@unique([userId, email])
+}
+
+model BloggerBlog {
+  id            String   @id @default(cuid())
+  googleAccountId String
+  blogId        String
+  name          String
+  url           String?
+  enabled       Boolean  @default(false)
+  schedule      ScheduleInterval @default(HOURLY)
+  dailyLimit    Int      @default(5)
+  publishMode   PublishMode @default(PUBLISH)
+  lastPublishedAt DateTime?
+  publishedToday Int     @default(0)
+  publishedDay  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  googleAccount GoogleAccount     @relation(fields: [googleAccountId], references: [id], onDelete: Cascade)
+  sitemapLinks  BlogSitemapLink[]
+  pinterestMap  BlogPinterestMap?
+  articles      Article[]
+
+  @@unique([googleAccountId, blogId])
+}
+
+enum ScheduleInterval {
+  EVERY_15_MIN
+  HOURLY
+  EVERY_6_HOURS
+  DAILY
+  MANUAL
+}
+
+enum PublishMode {
+  PUBLISH
+  DRAFT
+  SCHEDULED
+}
+
+model PinterestAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  username     String?
+  pinterestUserId String?
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  dailyPinLimit Int     @default(20)
+  pinsToday    Int      @default(0)
+  pinsDay      DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  boards  PinterestBoard[]
+  mappings BlogPinterestMap[]
+  articles Article[]
+
+  @@unique([userId, pinterestUserId])
+}
+
+model PinterestBoard {
+  id                 String   @id @default(cuid())
+  pinterestAccountId String
+  boardId            String
+  name               String
+  description        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  pinterestAccount PinterestAccount   @relation(fields: [pinterestAccountId], references: [id], onDelete: Cascade)
+  mappings         BlogPinterestMap[]
+
+  @@unique([pinterestAccountId, boardId])
+}
+
+model BlogPinterestMap {
+  id                 String @id @default(cuid())
+  bloggerBlogId      String @unique
+  pinterestAccountId String
+  pinterestBoardId   String?
+
+  bloggerBlog      BloggerBlog      @relation(fields: [bloggerBlogId], references: [id], onDelete: Cascade)
+  pinterestAccount PinterestAccount @relation(fields: [pinterestAccountId], references: [id], onDelete: Cascade)
+  pinterestBoard   PinterestBoard?  @relation(fields: [pinterestBoardId], references: [id], onDelete: SetNull)
+}
+
+model SitemapSource {
+  id           String      @id @default(cuid())
+  userId       String
+  url          String
+  type         SitemapType @default(SITEMAP)
+  enabled      Boolean     @default(true)
+  lastCrawledAt DateTime?
+  lastError    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  crawlHistory CrawlHistory[]
+  articles     Article[]
+  blogLinks    BlogSitemapLink[]
+
+  @@unique([userId, url])
+}
+
+enum SitemapType {
+  SITEMAP
+  SITEMAP_INDEX
+  RSS
+}
+
+model BlogSitemapLink {
+  id              String @id @default(cuid())
+  bloggerBlogId   String
+  sitemapSourceId String
+
+  bloggerBlog   BloggerBlog   @relation(fields: [bloggerBlogId], references: [id], onDelete: Cascade)
+  sitemapSource SitemapSource @relation(fields: [sitemapSourceId], references: [id], onDelete: Cascade)
+
+  @@unique([bloggerBlogId, sitemapSourceId])
+}
+
+model CrawlHistory {
+  id              String   @id @default(cuid())
+  sitemapSourceId String
+  urlsFound       Int      @default(0)
+  urlsNew         Int      @default(0)
+  status          String
+  error           String?
+  createdAt       DateTime @default(now())
+
+  sitemapSource SitemapSource @relation(fields: [sitemapSourceId], references: [id], onDelete: Cascade)
+}
+
+model Article {
+  id               String        @id @default(cuid())
+  userId           String
+  sitemapSourceId  String?
+  bloggerBlogId    String?
+  pinterestAccountId String?
+  sourceUrl        String
+  sourceUrlHash    String
+  status           ArticleStatus @default(DISCOVERED)
+  originalTitle    String?
+  originalContent  String?
+  originalMeta     String?
+  rewrittenTitle   String?
+  rewrittenHtml    String?
+  metaTitle        String?
+  metaDescription  String?
+  faqHtml          String?
+  tags             String       @default("[]")
+  slug             String?
+  featuredImageUrl String?
+  pinterestImageUrl String?
+  bloggerPostId    String?
+  bloggerPostUrl   String?
+  pinId            String?
+  pinUrl           String?
+  errorMessage     String?
+  publishedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sitemapSource    SitemapSource?    @relation(fields: [sitemapSourceId], references: [id], onDelete: SetNull)
+  bloggerBlog      BloggerBlog?      @relation(fields: [bloggerBlogId], references: [id], onDelete: SetNull)
+  pinterestAccount PinterestAccount? @relation(fields: [pinterestAccountId], references: [id], onDelete: SetNull)
+  jobRuns          JobRun[]
+  pins             PinRecord[]
+
+  @@unique([userId, sourceUrlHash])
+  @@index([status])
+}
+
+enum ArticleStatus {
+  DISCOVERED
+  EXTRACTING
+  REWRITING
+  IMAGING
+  PUBLISHING
+  PINNING
+  COMPLETED
+  FAILED
+}
+
+model JobRun {
+  id        String    @id @default(cuid())
+  userId    String?
+  articleId String?
+  queueName String
+  jobId     String?
+  status    JobStatus @default(QUEUED)
+  attempts  Int       @default(0)
+  error     String?
+  payload   String?
+  /// When set, worker will not claim this job until this time (server local clock)
+  scheduledFor DateTime?
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  article Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+
+  @@index([queueName, status])
+  @@index([status, scheduledFor])
+}
+
+enum JobStatus {
+  QUEUED
+  ACTIVE
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+model PinRecord {
+  id                 String   @id @default(cuid())
+  userId             String
+  articleId          String
+  pinterestAccountId String?
+  boardId            String?
+  boardName          String?
+  pinId              String
+  pinUrl             String?
+  title              String?
+  /// AI-generated SEO description + hashtags used when creating the pin
+  description        String?
+  /// Creative type used for this pin (e.g. Educational / Tip)
+  pinType            String?
+  /// Intended publish time for this pin slot (informational; jobs use JobRun.scheduledFor)
+  scheduledFor       DateTime?
+  createdAt          DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([articleId])
+}
+
+model AiSettings {
+  id                   String  @id @default(cuid())
+  userId               String  @unique
+  openRouterKey        String?
+  googleClientId       String?
+  googleClientSecret   String?
+  googleRedirectUri    String?
+  pinterestAppId       String?
+  pinterestAppSecret   String?
+  pinterestRedirectUri String?
+  /// Content rewrite provider: openrouter | google_ai_studio
+  contentProvider      String  @default("openrouter")
+  /// Encrypted JSON array or newline-separated Google AI Studio API keys
+  googleAiStudioKeys   String?
+  googleAiModel        String  @default("gemini-2.0-flash")
+  /// Round-robin index of last successfully used Google AI Studio key
+  googleAiKeyIndex     Int     @default(0)
+  /// Image provider: openrouter | snapgen
+  imageProvider        String  @default("openrouter")
+  snapgenApiKey        String?
+  snapgenBaseUrl       String  @default("https://api.snapgen.ai")
+  snapgenModel         String  @default("imagen-flash")
+  model                String  @default("openai/gpt-4o-mini")
+  imageModel           String  @default("x-ai/grok-2-image")
+  rewriteStyle         String  @default("professional")
+  articleLength        String  @default("similar")
+  seoLevel             String  @default("high")
+  imageStyle           String  @default("photorealistic")
+  imageSystemPrompt    String  @default("Create a high-quality, realistic image with no text, logos, or watermarks. Focus on clear subject composition and professional lighting.")
+  language             String  @default("en")
+  toneOfVoice          String  @default("informative")
+  dailyImageLimit      Int     @default(50)
+  imagesToday          Int     @default(0)
+  imagesDay            DateTime?
+  pinsPerArticle       Int     @default(1)
+  boardsPerArticle     Int     @default(1)
+  /// JSON array of pin creative types in preferred order (legacy; UI removed — worker may ignore)
+  pinTypes             String  @default("[\"Educational / Tip\",\"Inspirational / Quote-style visual\",\"How-to / Step\",\"Product / Lifestyle\",\"Stat / List\"]")
+  /// JSON array of "HH:mm" article publish times per day (server local), length ≈ articles/day
+  articlePostTimes     String  @default("[]")
+  /// JSON array of "HH:mm" pin publish times per day (server local), length ≈ pins×articles
+  pinPostTimes         String  @default("[]")
+  defaultSchedule      String  @default("HOURLY")
+  scheduleHour         Int     @default(9)
+  /// Comma-separated weekday keys: mon,tue,wed,thu,fri,sat,sun
+  postingDays          String  @default("mon,tue,wed,thu,fri,sat,sun")
+  /// JSON map of weekday -> preferred hour (0–23), e.g. {"mon":9,"tue":10}
+  postingHoursByDay    String  @default("{}")
+  /// Optional publish window start hour (0–23); null = no window
+  scheduleWindowStart  Int?
+  /// Optional publish window end hour (0–23, exclusive); null = no window
+  scheduleWindowEnd    Int?
+  /// Default articles-per-day applied to new/existing blogs when set from Settings
+  defaultDailyLimit    Int     @default(5)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ApiUsage {
+  id        String   @id @default(cuid())
+  userId    String
+  service   String
+  units     Int      @default(1)
+  meta      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, service, createdAt])
+}
+
+/// Singleton (id = "default"): Google/Pinterest OAuth *app* credentials, admin-configured, shared by all users.
+model AppConfig {
+  id                   String   @id @default("default")
+  googleClientId       String?
+  googleClientSecret   String?
+  googleRedirectUri    String?
+  pinterestAppId       String?
+  pinterestAppSecret   String?
+  pinterestRedirectUri String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}

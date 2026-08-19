@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+:root {
+  /* Pin Poster tokens */
+  --ink: #14110f;
+  --ink-soft: #3a322c;
+  --paper: #f7f3ee;
+  --paper-deep: #ebe4da;
+  --pin: #e60023;
+  --pin-deep: #b8001c;
+  --success-green: #1f6f5b;
+  --line: rgba(20, 17, 15, 0.12);
+  --glow: rgba(230, 0, 35, 0.18);
+  --background: var(--paper);
+  --foreground: var(--ink);
+
+  /* Legacy aliases used across ContentOps pages */
+  --bg: var(--paper);
+  --bg-elevated: rgba(255, 255, 255, 0.62);
+  --bg-soft: var(--paper-deep);
+  --fg: var(--ink);
+  --fg-muted: var(--ink-soft);
+  --accent: var(--pin);
+  --accent-dim: var(--pin-deep);
+  --accent-soft: rgba(230, 0, 35, 0.12);
+  --danger: #c41e3a;
+  --warn: #c45c00;
+  --success: var(--success-green);
+  --border: var(--line);
+  --shadow: none;
+  --shadow-hover: none;
+  --radius: 18px;
+  --radius-sm: 12px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
+  --color-pin: var(--pin);
+  --color-pin-deep: var(--pin-deep);
+  --color-accent: var(--success-green);
+  --color-line: var(--line);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--foreground);
+  background:
+    radial-gradient(1200px 600px at 85% -10%, var(--glow), transparent 55%),
+    radial-gradient(900px 500px at -10% 20%, rgba(31, 111, 91, 0.12), transparent 50%),
+    linear-gradient(180deg, #faf7f2 0%, var(--paper) 45%, #f0ebe3 100%);
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(230, 0, 35, 0.18);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(-2%, 3%, 0) scale(1.04);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-rise,
+.pin-rise {
+  animation: rise-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-rise-delay-1 {
+  animation: rise-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.animate-rise-delay-2 {
+  animation: rise-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.24s both;
+}
+
+.animate-drift {
+  animation: drift 18s ease-in-out infinite alternate;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 3.2s ease-in-out infinite;
+}
+
+.pin-grid {
+  background-image:
+    linear-gradient(rgba(20, 17, 15, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 17, 15, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.input-field {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input-field:focus {
+  border-color: rgba(230, 0, 35, 0.45);
+  box-shadow: 0 0 0 3px rgba(230, 0, 35, 0.12);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--pin);
+  color: white;
+  font-weight: 600;
+  padding: 0.85rem 1.4rem;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.btn-primary:hover {
+  background: var(--pin-deep);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  font-weight: 600;
+  padding: 0.85rem 1.4rem;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(20, 17, 15, 0.22);
+}
+
+.surface {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(8px);
+  border-radius: 18px;
+}
+
+.prose-policy h2 {
+  margin: 0;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.prose-policy p {
+  margin: 0;
+}
