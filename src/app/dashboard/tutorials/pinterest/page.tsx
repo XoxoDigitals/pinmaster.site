@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PageHeader, Panel } from "@/components/ui";
 
 const REDIRECT = "/api/oauth/pinterest/callback";
+const PRODUCTION = `https://pinmaster.site${REDIRECT}`;
 
 export default function PinterestTutorialPage() {
   return (
@@ -31,7 +32,7 @@ export default function PinterestTutorialPage() {
             <li>
               <strong style={{ color: "var(--ink)" }}>Configure redirect URI</strong>
               <br />
-              In the app settings, add:
+              Production must register exactly:
               <code
                 style={{
                   display: "block",
@@ -43,11 +44,13 @@ export default function PinterestTutorialPage() {
                   fontSize: 13,
                 }}
               >
-                {"{NEXTAUTH_URL}"}
-                {REDIRECT}
+                {PRODUCTION}
               </code>
               <span style={{ display: "block", marginTop: 8, fontSize: 13 }}>
-                Local default: <code>http://localhost:3000{REDIRECT}</code>
+                Local development only: <code>http://localhost:3000{REDIRECT}</code>
+              </span>
+              <span style={{ display: "block", marginTop: 8, fontSize: 13 }}>
+                Or use <code>{"{NEXTAUTH_URL}"}{REDIRECT}</code> matching your deploy. Settings shows the exact URI the app will send.
               </span>
             </li>
             <li>

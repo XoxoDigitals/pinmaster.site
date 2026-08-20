@@ -93,10 +93,10 @@ const defaults: Settings = {
   openRouterKey: "",
   googleClientId: "",
   googleClientSecret: "",
-  googleRedirectUri: "http://localhost:3000/api/oauth/google/callback",
+  googleRedirectUri: "",
   pinterestAppId: "",
   pinterestAppSecret: "",
-  pinterestRedirectUri: "http://localhost:3000/api/oauth/pinterest/callback",
+  pinterestRedirectUri: "",
   contentProvider: "openrouter",
   googleAiModel: "gemini-2.0-flash",
   googleAiKeyPreviews: [],
@@ -729,9 +729,24 @@ function SettingsForm() {
               onChange={(v) => setSettings((s) => ({ ...s, googleClientSecret: v }))}
               placeholder="GOCSPX-…"
             />
-            {field("googleRedirectUri", "Redirect URI", {
-              hint: "Must match the authorized redirect URI in Google Cloud.",
+            {field("googleRedirectUri", "Redirect URI (exact value used)", {
+              hint: "Add this exact URI in Google Cloud Console → Authorized redirect URIs. Production: https://pinmaster.site/api/oauth/google/callback. Leave blank to use NEXTAUTH_URL automatically; stale localhost is ignored when NEXTAUTH_URL is production.",
             })}
+            {settings.googleRedirectUri ? (
+              <code
+                style={{
+                  display: "block",
+                  padding: "0.75rem 1rem",
+                  borderRadius: 12,
+                  background: "var(--paper-deep)",
+                  color: "var(--ink)",
+                  fontSize: 13,
+                  wordBreak: "break-all",
+                }}
+              >
+                {settings.googleRedirectUri}
+              </code>
+            ) : null}
             <Link href="/dashboard/tutorials/google" style={{ fontSize: 13, fontWeight: 600, color: "var(--pin)" }}>
               Google OAuth setup tutorial →
             </Link>
@@ -762,9 +777,24 @@ function SettingsForm() {
               onChange={(v) => setSettings((s) => ({ ...s, pinterestAppSecret: v }))}
               placeholder="Your Pinterest app secret"
             />
-            {field("pinterestRedirectUri", "Redirect URI", {
-              hint: "Must match the redirect URI registered on your Pinterest app.",
+            {field("pinterestRedirectUri", "Redirect URI (exact value used)", {
+              hint: "Add this exact URI in the Pinterest developer portal. Production: https://pinmaster.site/api/oauth/pinterest/callback. Leave blank to use NEXTAUTH_URL automatically; stale localhost is ignored when NEXTAUTH_URL is production.",
             })}
+            {settings.pinterestRedirectUri ? (
+              <code
+                style={{
+                  display: "block",
+                  padding: "0.75rem 1rem",
+                  borderRadius: 12,
+                  background: "var(--paper-deep)",
+                  color: "var(--ink)",
+                  fontSize: 13,
+                  wordBreak: "break-all",
+                }}
+              >
+                {settings.pinterestRedirectUri}
+              </code>
+            ) : null}
             <Link href="/dashboard/tutorials/pinterest" style={{ fontSize: 13, fontWeight: 600, color: "var(--pin)" }}>
               Pinterest app setup tutorial →
             </Link>

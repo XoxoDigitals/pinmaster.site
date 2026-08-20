@@ -4,19 +4,22 @@ import {
   getPinterestUser,
   listPinterestBoards,
 } from "@/lib/pinterest";
+import { siteBaseUrl } from "@/lib/credentials";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
+  const baseUrl = siteBaseUrl(req.url);
 
   if (error || !code || !state) {
     return NextResponse.redirect(new URL("/dashboard/pinterest?error=oauth", req.url));
   }
 
   try {
-    const tokens = await exchangePinterestCode(code, state);
+    // Same redirect_uri as authorize (baseUrl from request / NEXTAUTH_URL)
+    const tokens = await exchangePinterestCode(code, state, { baseUrl });
     const profile = await getPinterestUser(tokens.access_token);
     const pinterestUserId = profile.id || profile.username || `user-${Date.now()}`;
 

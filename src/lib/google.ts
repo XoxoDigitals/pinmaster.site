@@ -3,22 +3,26 @@ import { prisma } from "@/lib/prisma";
 import {
   getGoogleAppCredentials,
   type GoogleAppCredentials,
+  type OAuthCredentialOptions,
 } from "@/lib/credentials";
 
 export function createGoogleOAuthClient(creds: GoogleAppCredentials) {
   return new google.auth.OAuth2(creds.clientId, creds.clientSecret, creds.redirectUri);
 }
 
-export async function getGoogleOAuthClient(userId?: string | null) {
-  const creds = await getGoogleAppCredentials(userId);
+export async function getGoogleOAuthClient(
+  userId?: string | null,
+  options?: OAuthCredentialOptions
+) {
+  const creds = await getGoogleAppCredentials(userId, options);
   if (!creds.clientId || !creds.clientSecret) {
     throw new Error("Google Client ID and Secret are not configured in Settings");
   }
   return { client: createGoogleOAuthClient(creds), creds };
 }
 
-export async function getGoogleAuthUrl(state: string) {
-  const { client } = await getGoogleOAuthClient(state);
+export async function getGoogleAuthUrl(state: string, options?: OAuthCredentialOptions) {
+  const { client } = await getGoogleOAuthClient(state, options);
   return client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
@@ -32,8 +36,12 @@ export async function getGoogleAuthUrl(state: string) {
   });
 }
 
-export async function exchangeGoogleCode(code: string, userId: string) {
-  const { client } = await getGoogleOAuthClient(userId);
+export async function exchangeGoogleCode(
+  code: string,
+  userId: string,
+  options?: OAuthCredentialOptions
+) {
+  const { client } = await getGoogleOAuthClient(userId, options);
   const { tokens } = await client.getToken(code);
   client.setCredentials(tokens);
 

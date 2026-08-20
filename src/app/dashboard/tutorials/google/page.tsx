@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PageHeader, Panel } from "@/components/ui";
 
 const REDIRECT = "/api/oauth/google/callback";
+const PRODUCTION = `https://pinmaster.site${REDIRECT}`;
 
 export default function GoogleTutorialPage() {
   return (
@@ -41,7 +42,7 @@ export default function GoogleTutorialPage() {
             <li>
               <strong style={{ color: "var(--ink)" }}>Add authorized redirect URI</strong>
               <br />
-              Add exactly:
+              Production must authorize exactly:
               <code
                 style={{
                   display: "block",
@@ -53,11 +54,13 @@ export default function GoogleTutorialPage() {
                   fontSize: 13,
                 }}
               >
-                {"{NEXTAUTH_URL}"}
-                {REDIRECT}
+                {PRODUCTION}
               </code>
               <span style={{ display: "block", marginTop: 8, fontSize: 13 }}>
-                Local default: <code>http://localhost:3000{REDIRECT}</code>
+                Local development only: <code>http://localhost:3000{REDIRECT}</code>
+              </span>
+              <span style={{ display: "block", marginTop: 8, fontSize: 13 }}>
+                Or use <code>{"{NEXTAUTH_URL}"}{REDIRECT}</code> matching your deploy. Settings shows the exact URI the app will send.
               </span>
             </li>
             <li>

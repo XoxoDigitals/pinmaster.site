@@ -1,9 +1,12 @@
-import { getPinterestAppCredentials } from "@/lib/credentials";
+import {
+  getPinterestAppCredentials,
+  type OAuthCredentialOptions,
+} from "@/lib/credentials";
 
 const PINTEREST_API = "https://api.pinterest.com/v5";
 
-export async function getPinterestAuthUrl(state: string) {
-  const creds = await getPinterestAppCredentials(state);
+export async function getPinterestAuthUrl(state: string, options?: OAuthCredentialOptions) {
+  const creds = await getPinterestAppCredentials(state, options);
   if (!creds.appId || !creds.appSecret) {
     throw new Error("Pinterest App ID and Secret are not configured in Settings");
   }
@@ -18,8 +21,12 @@ export async function getPinterestAuthUrl(state: string) {
   return `https://www.pinterest.com/oauth/?${params.toString()}`;
 }
 
-export async function exchangePinterestCode(code: string, userId: string) {
-  const creds = await getPinterestAppCredentials(userId);
+export async function exchangePinterestCode(
+  code: string,
+  userId: string,
+  options?: OAuthCredentialOptions
+) {
+  const creds = await getPinterestAppCredentials(userId, options);
   if (!creds.appId || !creds.appSecret) {
     throw new Error("Pinterest App ID and Secret are not configured in Settings");
   }

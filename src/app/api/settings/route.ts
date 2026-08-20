@@ -3,7 +3,13 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { ensureAiSettings } from "@/lib/session";
-import { ensureAppConfig, getGoogleAppCredentials, getPinterestAppCredentials } from "@/lib/credentials";
+import {
+  ensureAppConfig,
+  getGoogleAppCredentials,
+  getPinterestAppCredentials,
+  resolveOAuthRedirectUri,
+  siteBaseUrl,
+} from "@/lib/credentials";
 import {
   decryptGoogleAiKeys,
   encryptGoogleAiKeys,
@@ -44,22 +50,28 @@ async function publicSettings(
 ) {
   const googleKeys = decryptGoogleAiKeys(settings.googleAiStudioKeys);
   const appConfig = await ensureAppConfig();
-  const google = await getGoogleAppCredentials();
-  const pinterest = await getPinterestAppCredentials();
-  const base = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const base = siteBaseUrl();
+  const google = await getGoogleAppCredentials(null, { baseUrl: base });
+  const pinterest = await getPinterestAppCredentials(null, { baseUrl: base });
+  const googleRedirectUri = resolveOAuthRedirectUri(
+    appConfig.googleRedirectUri,
+    "/api/oauth/google/callback",
+    base
+  );
+  const pinterestRedirectUri = resolveOAuthRedirectUri(
+    appConfig.pinterestRedirectUri,
+    "/api/oauth/pinterest/callback",
+    base
+  );
 
   const oauth = isAdmin
     ? {
         googleClientId: safeClientId(appConfig.googleClientId),
         googleClientSecret: maskSecret(appConfig.googleClientSecret),
-        googleRedirectUri:
-          (appConfig.googleRedirectUri || "").trim() ||
-          `${base}/api/oauth/google/callback`,
+        googleRedirectUri,
         pinterestAppId: (appConfig.pinterestAppId || "").trim(),
         pinterestAppSecret: maskSecret(appConfig.pinterestAppSecret),
-        pinterestRedirectUri:
-          (appConfig.pinterestRedirectUri || "").trim() ||
-          `${base}/api/oauth/pinterest/callback`,
+        pinterestRedirectUri,
       }
     : {
         googleClientId: "",
