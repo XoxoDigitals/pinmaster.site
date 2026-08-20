@@ -75,8 +75,27 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
+  const userId = session.user.id;
+
+  const articles = await prisma.article.findMany({
+    where: { sitemapSourceId: id, userId },
+    select: { id: true },
+  });
+  const articleIds = articles.map((a) => a.id);
+
+  if (articleIds.length > 0) {
+    // JobRun.article uses onDelete: SetNull — remove jobs explicitly
+    await prisma.jobRun.deleteMany({
+      where: { articleId: { in: articleIds } },
+    });
+    // PinRecord cascades from Article
+    await prisma.article.deleteMany({
+      where: { id: { in: articleIds }, userId },
+    });
+  }
+
   await prisma.sitemapSource.deleteMany({
-    where: { id, userId: session.user.id },
+    where: { id, userId },
   });
 
   return NextResponse.json({ ok: true });
