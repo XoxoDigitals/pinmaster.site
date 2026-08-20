@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const baseUrl = siteBaseUrl(req.url);
+  const baseUrl = siteBaseUrl(req.url, req.headers);
   const creds = await getGoogleAppCredentials(session.user.id, { baseUrl });
   if (!creds.clientId || !creds.clientSecret) {
     return NextResponse.redirect(new URL("/dashboard/settings?error=google_keys", baseUrl));

@@ -56,12 +56,41 @@ export function isLocalhostUrl(uri: string): boolean {
 }
 
 /**
- * Site origin for OAuth redirects.
- * Order: NEXTAUTH_URL / AUTH_URL, else request origin, else localhost.
+ * Site origin for OAuth redirects / post-OAuth browser redirects.
+ * Order: NEXTAUTH_URL / AUTH_URL, else x-forwarded-host|host (+ proto), else request URL origin, else localhost.
+ * Never prefer a localhost request host when env is a non-local production URL.
  * If env is stale localhost but the request host is production, prefer the request.
  */
-export function siteBaseUrl(requestUrl?: string | URL): string {
+export function siteBaseUrl(
+  requestUrl?: string | URL | null,
+  headers?: Headers | null
+): string {
   const fromEnv = (process.env.NEXTAUTH_URL || process.env.AUTH_URL || "").trim();
+
+  let fromHeaders = "";
+  if (headers) {
+    const forwardedHost = (
+      headers.get("x-forwarded-host") ||
+      headers.get("host") ||
+      ""
+    )
+      .split(",")[0]
+      .trim();
+    if (forwardedHost) {
+      const proto = (
+        headers.get("x-forwarded-proto") ||
+        (isLocalhostUrl(`http://${forwardedHost}`) ? "http" : "https")
+      )
+        .split(",")[0]
+        .trim();
+      try {
+        fromHeaders = normalizeBaseUrl(`${proto}://${forwardedHost}`);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   let fromRequest = "";
   if (requestUrl) {
     try {
@@ -72,14 +101,24 @@ export function siteBaseUrl(requestUrl?: string | URL): string {
     }
   }
 
-  if (fromEnv && fromRequest) {
-    if (isLocalhostUrl(fromEnv) && !isLocalhostUrl(fromRequest)) {
-      return fromRequest;
+  // Prefer forwarded host over raw req.url when they disagree (proxy / bad callback host).
+  const fromIncoming =
+    fromHeaders && fromRequest && isLocalhostUrl(fromRequest) && !isLocalhostUrl(fromHeaders)
+      ? fromHeaders
+      : fromHeaders || fromRequest;
+
+  if (fromEnv && fromIncoming) {
+    if (isLocalhostUrl(fromEnv) && !isLocalhostUrl(fromIncoming)) {
+      return fromIncoming;
+    }
+    // Production env wins over malformed localhost callback hosts (e.g. localhost:334).
+    if (!isLocalhostUrl(fromEnv) && isLocalhostUrl(fromIncoming)) {
+      return normalizeBaseUrl(fromEnv);
     }
     return normalizeBaseUrl(fromEnv);
   }
   if (fromEnv) return normalizeBaseUrl(fromEnv);
-  if (fromRequest) return fromRequest;
+  if (fromIncoming) return fromIncoming;
   return "http://localhost:3000";
 }
 

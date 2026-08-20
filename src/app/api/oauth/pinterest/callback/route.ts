@@ -11,14 +11,14 @@ export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
-  const baseUrl = siteBaseUrl(req.url);
+  const baseUrl = siteBaseUrl(req.url, req.headers);
 
   if (error || !code || !state) {
-    return NextResponse.redirect(new URL("/dashboard/pinterest?error=oauth", req.url));
+    return NextResponse.redirect(new URL("/dashboard/pinterest?error=oauth", baseUrl));
   }
 
   try {
-    // Same redirect_uri as authorize (baseUrl from request / NEXTAUTH_URL)
+    // Same redirect_uri as authorize (baseUrl from NEXTAUTH_URL / headers / request)
     const tokens = await exchangePinterestCode(code, state, { baseUrl });
     const profile = await getPinterestUser(tokens.access_token);
     const pinterestUserId = profile.id || profile.username || `user-${Date.now()}`;
@@ -69,9 +69,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.redirect(new URL("/dashboard/pinterest?connected=1", req.url));
+    return NextResponse.redirect(new URL("/dashboard/pinterest?connected=1", baseUrl));
   } catch (e) {
     console.error(e);
-    return NextResponse.redirect(new URL("/dashboard/pinterest?error=oauth", req.url));
+    return NextResponse.redirect(new URL("/dashboard/pinterest?error=oauth", baseUrl));
   }
 }
