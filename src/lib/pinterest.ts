@@ -78,8 +78,21 @@ async function pinterestFetch(accessToken: string, path: string, init?: RequestI
 export async function getPinterestUser(accessToken: string) {
   return pinterestFetch(accessToken, "/user_account") as Promise<{
     username?: string;
+    business_name?: string;
     id?: string;
   }>;
+}
+
+/** Prefer @username; fall back to business_name when username is empty. */
+export function resolvePinterestUsername(profile: {
+  username?: string;
+  business_name?: string;
+}): string | null {
+  const username = profile.username?.trim();
+  if (username) return username;
+  const business = profile.business_name?.trim();
+  if (business) return business;
+  return null;
 }
 
 export async function listPinterestBoards(accessToken: string) {

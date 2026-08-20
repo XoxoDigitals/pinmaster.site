@@ -100,6 +100,32 @@ export default function BlogsPage() {
     await load();
   }
 
+  async function disconnectGoogle(accountId: string, email: string) {
+    if (
+      !window.confirm(
+        `Disconnect ${email}? This removes the Google account and its blogs from Pin Poster.`
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setMessage("");
+    const res = await fetch(`/api/blogs?id=${encodeURIComponent(accountId)}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error || "Could not disconnect Google account");
+      return;
+    }
+    setMessage(`Disconnected ${email}`);
+    await load();
+  }
+
+  function pinAccountLabel(p: PinAccount) {
+    return p.username ? `@${p.username}` : p.id;
+  }
+
   async function saveMapping(bloggerBlogId: string) {
     const draft = drafts[bloggerBlogId];
     if (!draft?.accountId) {
@@ -144,10 +170,12 @@ export default function BlogsPage() {
   }
 
   function pairLabel(blog: Blog) {
-    const accountName =
-      blog.pinterestMap?.pinterestAccount?.username ||
-      pinAccountById.get(blog.pinterestMap?.pinterestAccountId || "")?.username ||
-      blog.pinterestMap?.pinterestAccountId;
+    const mapped = blog.pinterestMap?.pinterestAccount;
+    const fromList = pinAccountById.get(blog.pinterestMap?.pinterestAccountId || "");
+    const username = mapped?.username || fromList?.username;
+    const accountName = username
+      ? `@${username}`
+      : blog.pinterestMap?.pinterestAccountId;
     const boardName =
       blog.pinterestMap?.pinterestBoard?.name ||
       (blog.pinterestMap?.pinterestBoardId
@@ -181,9 +209,31 @@ export default function BlogsPage() {
       <div style={{ display: "grid", gap: 16 }}>
         {accounts.map((account) => (
           <Panel key={account.id}>
-            <h2 style={{ margin: "0 0 12px", fontSize: 15, color: "var(--accent)" }}>
-              {account.email}
-            </h2>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 15, color: "var(--accent)" }}>
+                {account.email}
+              </h2>
+              <button
+                type="button"
+                style={{
+                  ...btnGhost,
+                  color: "var(--danger)",
+                  borderColor: "rgba(196, 30, 58, 0.35)",
+                }}
+                onClick={() => disconnectGoogle(account.id, account.email)}
+              >
+                Disconnect
+              </button>
+            </div>
             <div style={{ display: "grid", gap: 12 }}>
               {account.blogs.map((blog) => {
                 const paired = Boolean(blog.pinterestMap?.pinterestAccountId);
@@ -327,7 +377,7 @@ export default function BlogsPage() {
                           <option value="">Select Pinterest account</option>
                           {pinAccounts.map((p) => (
                             <option key={p.id} value={p.id}>
-                              {p.username || p.id}
+                              {pinAccountLabel(p)}
                             </option>
                           ))}
                         </select>

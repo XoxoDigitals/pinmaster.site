@@ -3,6 +3,7 @@ import {
   exchangePinterestCode,
   getPinterestUser,
   listPinterestBoards,
+  resolvePinterestUsername,
 } from "@/lib/pinterest";
 import { siteBaseUrl } from "@/lib/credentials";
 import { prisma } from "@/lib/prisma";
@@ -20,8 +21,15 @@ export async function GET(req: NextRequest) {
   try {
     // Same redirect_uri as authorize (baseUrl from NEXTAUTH_URL / headers / request)
     const tokens = await exchangePinterestCode(code, state, { baseUrl });
-    const profile = await getPinterestUser(tokens.access_token);
-    const pinterestUserId = profile.id || profile.username || `user-${Date.now()}`;
+    let profile = await getPinterestUser(tokens.access_token);
+    let username = resolvePinterestUsername(profile);
+    if (!username) {
+      // Retry once if user_account returned empty username
+      profile = await getPinterestUser(tokens.access_token);
+      username = resolvePinterestUsername(profile);
+    }
+    const pinterestUserId =
+      profile.id || username || profile.username || `user-${Date.now()}`;
 
     const account = await prisma.pinterestAccount.upsert({
       where: {
@@ -36,12 +44,12 @@ export async function GET(req: NextRequest) {
         expiresAt: tokens.expires_in
           ? new Date(Date.now() + tokens.expires_in * 1000)
           : null,
-        username: profile.username,
+        ...(username ? { username } : {}),
       },
       create: {
         userId: state,
         pinterestUserId,
-        username: profile.username,
+        username,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         expiresAt: tokens.expires_in

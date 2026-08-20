@@ -81,3 +81,25 @@ export async function PATCH(req: NextRequest) {
 
   return NextResponse.json(updated);
 }
+
+export async function DELETE(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const id = req.nextUrl.searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ error: "id required" }, { status: 400 });
+  }
+
+  const account = await prisma.googleAccount.findFirst({
+    where: { id, userId: session.user.id },
+  });
+  if (!account) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  await prisma.googleAccount.delete({ where: { id: account.id } });
+  return NextResponse.json({ ok: true });
+}
