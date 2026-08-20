@@ -19,6 +19,9 @@ type Blog = {
   dailyLimit: number;
   publishMode: string;
   publishedToday: number;
+  categories?: string;
+  categoriesSyncedAt?: string | null;
+  categoryList?: string[];
   pinterestMap: {
     pinterestAccountId: string;
     pinterestBoardId: string | null;
@@ -49,6 +52,7 @@ export default function BlogsPage() {
   const [pinAccounts, setPinAccounts] = useState<PinAccount[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftPair>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -167,6 +171,25 @@ export default function BlogsPage() {
       }
       return { ...prev, [blogId]: next };
     });
+  }
+
+  async function syncCategories(blogId: string) {
+    setError("");
+    setMessage("");
+    setSyncingId(blogId);
+    const res = await fetch("/api/blogs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "sync_categories", blogId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setSyncingId(null);
+    if (!res.ok) {
+      setError(data.error || "Could not sync categories");
+      return;
+    }
+    setMessage(`Synced ${data.categories?.length ?? 0} categories`);
+    await load();
   }
 
   function pairLabel(blog: Blog) {
@@ -409,6 +432,62 @@ export default function BlogsPage() {
                           Connect a Pinterest account under Pinterest before pairing.
                         </p>
                       )}
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <p style={{ margin: 0, fontSize: 12, color: "var(--fg-muted)" }}>
+                          Blogger categories
+                          {blog.categoriesSyncedAt
+                            ? ` · synced ${new Date(blog.categoriesSyncedAt).toLocaleString()}`
+                            : " · not synced yet"}
+                        </p>
+                        <button
+                          type="button"
+                          style={btnGhost}
+                          disabled={syncingId === blog.id}
+                          onClick={() => syncCategories(blog.id)}
+                        >
+                          {syncingId === blog.id ? "Syncing…" : "Sync categories"}
+                        </button>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 6,
+                          marginTop: 8,
+                        }}
+                      >
+                        {(blog.categoryList || []).length ? (
+                          (blog.categoryList || []).map((cat) => (
+                            <span
+                              key={cat}
+                              style={{
+                                fontSize: 12,
+                                padding: "0.25rem 0.55rem",
+                                borderRadius: 999,
+                                border: "1px solid var(--line)",
+                                background: "rgba(255,255,255,0.55)",
+                              }}
+                            >
+                              {cat}
+                            </span>
+                          ))
+                        ) : (
+                          <p style={{ margin: 0, fontSize: 12, color: "var(--fg-muted)" }}>
+                            No labels found yet — sync after the blog has labeled posts.
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

@@ -10,6 +10,7 @@ export type GoogleRewriteResult = {
   faqHtml: string;
   tags: string[];
   slug: string;
+  category: string | null;
 };
 
 function parseKeys(raw: string): string[] {
@@ -117,7 +118,7 @@ async function callGemini(
 
 export async function rewriteWithGoogleAiStudio(
   userId: string,
-  input: { title: string; content: string; url: string }
+  input: { title: string; content: string; url: string; categories?: string[] }
 ): Promise<GoogleRewriteResult> {
   const settings = await prisma.aiSettings.upsert({
     where: { userId },
@@ -130,8 +131,9 @@ export async function rewriteWithGoogleAiStudio(
     throw new Error("Google AI Studio API keys not configured");
   }
 
+  const categories = input.categories || [];
   const model = settings.googleAiModel || "gemini-2.0-flash";
-  const system = buildRewriteSystemPrompt(settings);
+  const system = buildRewriteSystemPrompt(settings, categories);
   const userContent = `Source URL: ${input.url}\nOriginal title: ${input.title}\n\nOriginal content:\n${input.content.slice(0, 24000)}`;
 
   const start = ((settings.googleAiKeyIndex % keys.length) + keys.length) % keys.length;
@@ -142,7 +144,7 @@ export async function rewriteWithGoogleAiStudio(
     const apiKey = keys[index];
     try {
       const raw = await callGemini(apiKey, model, system, userContent);
-      const parsed = JSON.parse(raw) as GoogleRewriteResult;
+      const parsed = JSON.parse(raw) as GoogleRewriteResult & { category?: string | null };
 
       // Advance to next key for fairness on the following request
       await prisma.aiSettings.update({
@@ -172,6 +174,7 @@ export async function rewriteWithGoogleAiStudio(
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
             .replace(/(^-|-$)/g, ""),
+        category: typeof parsed.category === "string" ? parsed.category : null,
       };
     } catch (err) {
       const e = err as Error & { retriable?: boolean; status?: number };

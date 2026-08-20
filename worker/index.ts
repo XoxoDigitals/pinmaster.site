@@ -37,7 +37,11 @@ import {
   canRunScheduledWork,
   parsePostTimes,
   scheduledForSlot,
+  countExtractsStartedToday,
+  dueArticleSlotsToday,
 } from "../src/lib/limits";
+import { parseCategories, resolveCategory } from "../src/lib/blog-categories";
+import { deriveKeywordBoardName } from "../src/lib/keyword-board";
 
 const MAX_ATTEMPTS = 3;
 const POLL_MS = 2000;
@@ -130,7 +134,7 @@ async function handleCrawl(job: JobRow) {
   for (const url of urls) {
     const sourceUrlHash = hashUrl(url);
     try {
-      const article = await prisma.article.create({
+      await prisma.article.create({
         data: {
           userId: source.userId,
           sitemapSourceId: source.id,
@@ -141,7 +145,7 @@ async function handleCrawl(job: JobRow) {
         },
       });
       urlsNew += 1;
-      await enqueueExtract(article.id, source.userId);
+      // Do NOT auto-enqueue extract/rewrite — scheduler respects dailyLimit.
     } catch {
       // duplicate
     }
@@ -194,21 +198,28 @@ async function handleExtract(job: JobRow) {
 
 async function handleRewrite(job: JobRow) {
   const { articleId } = payloadOf(job) as { articleId: string };
-  const article = await prisma.article.findUniqueOrThrow({ where: { id: articleId } });
+  const article = await prisma.article.findUniqueOrThrow({
+    where: { id: articleId },
+    include: { bloggerBlog: true },
+  });
 
   if (!article.originalTitle || !article.originalContent) {
     throw new Error("Missing original content");
   }
 
+  const categories = parseCategories(article.bloggerBlog?.categories);
   const result = await rewriteArticle(article.userId, {
     title: article.originalTitle,
     content: article.originalContent,
     url: article.sourceUrl,
+    categories,
   });
 
   const html = result.faqHtml
     ? `${result.html}\n<section class="faq">${result.faqHtml}</section>`
     : result.html;
+
+  const bloggerCategory = resolveCategory(result.category, categories);
 
   await prisma.article.update({
     where: { id: article.id },
@@ -220,6 +231,7 @@ async function handleRewrite(job: JobRow) {
       faqHtml: result.faqHtml,
       tags: stringifyTags(result.tags),
       slug: result.slug,
+      bloggerCategory,
       status: "IMAGING",
     },
   });
@@ -287,6 +299,10 @@ async function handleImages(job: JobRow) {
   }
   meta.pinterestImageUrls = pinUrls;
   meta.pinterestPinTypes = pinTypeOrder;
+  const forcePublishNow = Boolean(meta.forcePublishNow);
+  if (forcePublishNow) {
+    delete meta.forcePublishNow;
+  }
 
   await prisma.article.update({
     where: { id: article.id },
@@ -300,8 +316,9 @@ async function handleImages(job: JobRow) {
   });
 
   // Schedule Blogger publish for the next article time slot (server local), if configured.
+  // Publish now skips the slot and runs ASAP.
   let bloggerAt: Date | null = null;
-  if (article.bloggerBlogId) {
+  if (!forcePublishNow && article.bloggerBlogId) {
     const blog = await prisma.bloggerBlog.findUnique({ where: { id: article.bloggerBlogId } });
     if (blog) {
       const articleTimes = parsePostTimes(settings.articlePostTimes);
@@ -309,11 +326,18 @@ async function handleImages(job: JobRow) {
       bloggerAt = scheduledForSlot(articleTimes, slotIndex);
     }
   }
-  await enqueueBlogger(article.id, article.userId, bloggerAt);
+  await enqueueBlogger(
+    article.id,
+    article.userId,
+    bloggerAt,
+    forcePublishNow ? { immediate: true } : undefined
+  );
 }
 
 async function handleBlogger(job: JobRow) {
-  const { articleId } = payloadOf(job) as { articleId: string };
+  const payload = payloadOf(job) as { articleId: string; immediate?: boolean };
+  const { articleId } = payload;
+  const immediate = Boolean(payload.immediate);
   const article = await prisma.article.findUniqueOrThrow({
     where: { id: articleId },
     include: {
@@ -329,28 +353,35 @@ async function handleBlogger(job: JobRow) {
   }
 
   // Respect per-article clock times (article #1 → first slot, #2 → second, …).
-  const aiForArticle = await prisma.aiSettings.findUnique({
-    where: { userId: article.userId },
-  });
-  const articleTimes = parsePostTimes(aiForArticle?.articlePostTimes);
-  if (articleTimes.length) {
-    const slotIndex = isSameUtcDay(article.bloggerBlog.publishedDay)
-      ? article.bloggerBlog.publishedToday
-      : 0;
-    const at = scheduledForSlot(articleTimes, slotIndex);
-    if (at && at.getTime() > Date.now() + 1500) {
-      await enqueueBlogger(article.id, article.userId, at);
-      return;
+  // Publish now (immediate) ignores slot delays.
+  if (!immediate) {
+    const aiForArticle = await prisma.aiSettings.findUnique({
+      where: { userId: article.userId },
+    });
+    const articleTimes = parsePostTimes(aiForArticle?.articlePostTimes);
+    if (articleTimes.length) {
+      const slotIndex = isSameUtcDay(article.bloggerBlog.publishedDay)
+        ? article.bloggerBlog.publishedToday
+        : 0;
+      const at = scheduledForSlot(articleTimes, slotIndex);
+      if (at && at.getTime() > Date.now() + 1500) {
+        await enqueueBlogger(article.id, article.userId, at);
+        return;
+      }
     }
   }
 
   const isDraft = article.bloggerBlog.publishMode === "DRAFT";
+  const categoryLabel = article.bloggerCategory?.trim();
+  const labels = categoryLabel
+    ? [categoryLabel]
+    : parseTags(article.tags).slice(0, 5);
   const post = await publishToBlogger({
     googleAccountId: article.bloggerBlog.googleAccountId,
     blogId: article.bloggerBlog.blogId,
     title: article.rewrittenTitle || article.originalTitle || "Untitled",
     content: article.rewrittenHtml || "",
-    labels: parseTags(article.tags),
+    labels,
     isDraft,
   });
 
@@ -382,12 +413,18 @@ async function handleBlogger(job: JobRow) {
   });
 
   // First pin uses the next global pin slot for today (server local).
+  // Publish now chains pins immediately.
   const ai = await prisma.aiSettings.findUnique({ where: { userId: article.userId } });
   const pinTimes = parsePostTimes(ai?.pinPostTimes);
   const account = await prisma.pinterestAccount.findUnique({ where: { id: mappedAccountId } });
   const pinSlot = account && isSameUtcDay(account.pinsDay) ? account.pinsToday : 0;
-  const pinAt = scheduledForSlot(pinTimes, pinSlot);
-  await enqueuePinterest(article.id, article.userId, pinAt);
+  const pinAt = immediate ? null : scheduledForSlot(pinTimes, pinSlot);
+  await enqueuePinterest(
+    article.id,
+    article.userId,
+    pinAt,
+    immediate ? { immediate: true } : undefined
+  );
 }
 
 async function ensureBoards(
@@ -439,8 +476,52 @@ async function ensureBoards(
   return boards;
 }
 
+/** Create or reuse a Pinterest board named after the article's main keyword. */
+async function ensureKeywordBoard(
+  account: { id: string; accessToken: string },
+  boardName: string
+): Promise<{ boardId: string; name: string }> {
+  const name = boardName.trim() || "Untitled";
+  const existing = await listPinterestBoards(account.accessToken);
+  const found = existing.find((b) => b.name.toLowerCase() === name.toLowerCase());
+  if (found) {
+    await prisma.pinterestBoard.upsert({
+      where: {
+        pinterestAccountId_boardId: {
+          pinterestAccountId: account.id,
+          boardId: found.id,
+        },
+      },
+      update: { name: found.name },
+      create: {
+        pinterestAccountId: account.id,
+        boardId: found.id,
+        name: found.name,
+        description: found.description,
+      },
+    });
+    return { boardId: found.id, name: found.name };
+  }
+
+  const created = await createPinterestBoard(
+    account.accessToken,
+    name,
+    `Keyword board for ${name}`
+  );
+  await prisma.pinterestBoard.create({
+    data: {
+      pinterestAccountId: account.id,
+      boardId: created.id,
+      name: created.name || name,
+    },
+  });
+  return { boardId: created.id, name: created.name || name };
+}
+
 async function handlePinterest(job: JobRow) {
-  const { articleId } = payloadOf(job) as { articleId: string };
+  const payload = payloadOf(job) as { articleId: string; immediate?: boolean };
+  const { articleId } = payload;
+  const immediate = Boolean(payload.immediate);
   const article = await prisma.article.findUniqueOrThrow({
     where: { id: articleId },
     include: {
@@ -456,7 +537,6 @@ async function handlePinterest(job: JobRow) {
   });
 
   const pinsPerArticle = Math.max(1, Math.min(20, settings.pinsPerArticle || 1));
-  const boardsPerArticle = Math.max(1, Math.min(10, settings.boardsPerArticle || 1));
   const pinTypes = parsePinTypes(settings.pinTypes);
 
   // Always pin via the blog's mapped Pinterest account — never a random/fallback account.
@@ -509,16 +589,9 @@ async function handlePinterest(job: JobRow) {
     );
   }
 
-  const baseName = mappedBoard?.name || article.bloggerBlog?.name || "ContentOps";
-
-  let boards: Array<{ boardId: string; name: string }> = [];
-  if (mappedBoard && boardsPerArticle === 1) {
-    // One board: all pins on the mapped/paired board, each a different creative type.
-    boards = [{ boardId: mappedBoard.boardId, name: mappedBoard.name }];
-  } else {
-    // Extra boards are created only on the paired account.
-    boards = await ensureBoards(account, boardsPerArticle, baseName);
-  }
+  // One keyword board per article — all pins go here (boardsPerArticle ignored).
+  const keywordName = deriveKeywordBoardName(article);
+  const boards = [await ensureKeywordBoard(account, keywordName)];
 
   const link = article.bloggerPostUrl || article.sourceUrl;
   const titleBase = article.rewrittenTitle || article.originalTitle || "Pin";
@@ -556,10 +629,11 @@ async function handlePinterest(job: JobRow) {
   const pinType = storedPinTypes[i] || pinTypeForIndex(pinTypes, i);
   const pinTimes = parsePostTimes(settings.pinPostTimes);
   const pinSlot = isSameUtcDay(account.pinsDay) ? account.pinsToday : 0;
-  const slotAt = scheduledForSlot(pinTimes, pinSlot);
+  const slotAt = immediate ? null : scheduledForSlot(pinTimes, pinSlot);
 
   // If this pin's slot is still in the future, re-queue and wait (don't dump early).
-  if (slotAt && slotAt.getTime() > Date.now() + 1500) {
+  // Publish now (immediate) skips the wait.
+  if (!immediate && slotAt && slotAt.getTime() > Date.now() + 1500) {
     await enqueuePinterest(article.id, article.userId, slotAt);
     return;
   }
@@ -622,8 +696,75 @@ async function handlePinterest(job: JobRow) {
       where: { id: account.id },
     });
     const nextSlot = isSameUtcDay(refreshed.pinsDay) ? refreshed.pinsToday : 0;
-    const nextAt = scheduledForSlot(pinTimes, nextSlot);
-    await enqueuePinterest(article.id, article.userId, nextAt);
+    const nextAt = immediate ? null : scheduledForSlot(pinTimes, nextSlot);
+    await enqueuePinterest(
+      article.id,
+      article.userId,
+      nextAt,
+      immediate ? { immediate: true } : undefined
+    );
+  }
+}
+
+async function enqueueDailyDiscoveredArticles() {
+  const blogs = await prisma.bloggerBlog.findMany({
+    where: { enabled: true },
+    include: { googleAccount: true, pinterestMap: true },
+  });
+  const now = new Date();
+
+  for (const blog of blogs) {
+    if (!blog.pinterestMap?.pinterestAccountId) continue;
+
+    const settings = await prisma.aiSettings.findUnique({
+      where: { userId: blog.googleAccount.userId },
+    });
+
+    if (
+      !canRunScheduledWork(settings, {
+        requirePreferredHour: blog.schedule === "DAILY",
+      }, now)
+    ) {
+      continue;
+    }
+
+    const startedToday = await countExtractsStartedToday(blog.id);
+    const dailyLimit = Math.max(0, blog.dailyLimit || 0);
+    if (startedToday >= dailyLimit) continue;
+
+    const articleTimes = parsePostTimes(settings?.articlePostTimes);
+    const dueSlots = dueArticleSlotsToday(articleTimes, now);
+    const slotCap = dueSlots == null ? dailyLimit : dueSlots;
+    const remaining = Math.min(dailyLimit, slotCap) - startedToday;
+    if (remaining <= 0) continue;
+
+    const discovered = await prisma.article.findMany({
+      where: { bloggerBlogId: blog.id, status: "DISCOVERED" },
+      orderBy: { createdAt: "asc" },
+      take: remaining + 5,
+    });
+
+    let enqueued = 0;
+    for (const article of discovered) {
+      if (enqueued >= remaining) break;
+      const existing = await prisma.jobRun.findFirst({
+        where: {
+          articleId: article.id,
+          queueName: QUEUE_NAMES.EXTRACT_ARTICLE,
+          status: { in: ["QUEUED", "ACTIVE", "RETRYING"] },
+        },
+      });
+      if (existing) continue;
+
+      // Stagger by articlePostTimes when configured
+      let scheduledFor: Date | null = null;
+      if (articleTimes.length) {
+        const slotIndex = startedToday + enqueued;
+        scheduledFor = scheduledForSlot(articleTimes, slotIndex, now);
+      }
+      await enqueueExtract(article.id, blog.googleAccount.userId, scheduledFor);
+      enqueued += 1;
+    }
   }
 }
 
@@ -697,9 +838,13 @@ async function handleScheduler() {
     }
   }
 
+  // Start only up to dailyLimit DISCOVERED articles (extract→rewrite→…).
+  await enqueueDailyDiscoveredArticles();
+
+  // Reset old failures to DISCOVERED so they re-enter the daily quota pool (no flood).
   const failed = await prisma.article.findMany({
     where: { status: "FAILED" },
-    take: 10,
+    take: 20,
     orderBy: { updatedAt: "asc" },
   });
 
@@ -709,7 +854,6 @@ async function handleScheduler() {
         where: { id: article.id },
         data: { status: "DISCOVERED", errorMessage: null },
       });
-      await enqueueExtract(article.id, article.userId);
     }
   }
 }

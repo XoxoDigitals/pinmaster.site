@@ -61,6 +61,9 @@ model BloggerBlog {
   lastPublishedAt DateTime?
   publishedToday Int     @default(0)
   publishedDay  DateTime?
+  /// JSON string array of Blogger labels/categories synced from the blog
+  categories         String    @default("[]")
+  categoriesSyncedAt DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -201,6 +204,8 @@ model Article {
   faqHtml          String?
   tags             String       @default("[]")
   slug             String?
+  /// Blogger label/category chosen by AI from the blog's synced categories
+  bloggerCategory  String?
   featuredImageUrl String?
   pinterestImageUrl String?
   bloggerPostId    String?

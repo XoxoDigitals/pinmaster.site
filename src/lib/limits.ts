@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { ScheduleInterval } from "@prisma/client";
+import { scheduledForSlot } from "@/lib/schedule";
 export {
   canRunScheduledWork,
   isPostingDayEnabled,
@@ -41,6 +42,46 @@ export function isSameUtcDay(a?: Date | null, b: Date = new Date()): boolean {
     a.getUTCMonth() === b.getUTCMonth() &&
     a.getUTCDate() === b.getUTCDate()
   );
+}
+
+/** Start of today in server local time (matches articlePostTimes / pinPostTimes). */
+export function startOfLocalDay(now: Date = new Date()): Date {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * How many extract jobs were opened today for a blog (queued/active/completed).
+ * Used to throttle auto-pipeline starts to dailyLimit.
+ */
+export async function countExtractsStartedToday(bloggerBlogId: string): Promise<number> {
+  const dayStart = startOfLocalDay();
+  return prisma.jobRun.count({
+    where: {
+      queueName: "extract-article",
+      createdAt: { gte: dayStart },
+      status: { in: ["QUEUED", "ACTIVE", "COMPLETED", "RETRYING"] },
+      article: { bloggerBlogId },
+    },
+  });
+}
+
+/**
+ * How many article publish slots are due by now given configured HH:mm times.
+ * Empty times → full dailyLimit allowed (caller still caps by dailyLimit).
+ */
+export function dueArticleSlotsToday(
+  articlePostTimes: string[],
+  now: Date = new Date()
+): number | null {
+  if (!articlePostTimes.length) return null;
+  let due = 0;
+  for (let i = 0; i < articlePostTimes.length; i++) {
+    const at = scheduledForSlot(articlePostTimes, i, now);
+    if (!at || at.getTime() <= now.getTime()) due += 1;
+  }
+  return due;
 }
 
 export async function resetDailyCountersIfNeeded() {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { fetchBlogCategories } from "@/lib/google";
+import { parseCategories, serializeCategories } from "@/lib/blog-categories";
 
 export async function GET() {
   const session = await auth();
@@ -20,6 +22,7 @@ export async function GET() {
             },
           },
           sitemapLinks: true,
+          _count: { select: { articles: true } },
         },
         orderBy: { name: "asc" },
       },
@@ -27,7 +30,61 @@ export async function GET() {
     orderBy: { email: "asc" },
   });
 
-  return NextResponse.json(accounts);
+  const shaped = accounts.map((account) => ({
+    ...account,
+    blogs: account.blogs.map((blog) => ({
+      ...blog,
+      categoryList: parseCategories(blog.categories),
+      articleCount: blog._count.articles,
+    })),
+  }));
+
+  return NextResponse.json(shaped);
+}
+
+export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json();
+  const { action, blogId } = body as { action?: string; blogId?: string };
+
+  if (action !== "sync_categories" || !blogId) {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  }
+
+  const blog = await prisma.bloggerBlog.findFirst({
+    where: {
+      id: blogId,
+      googleAccount: { userId: session.user.id },
+    },
+  });
+  if (!blog) {
+    return NextResponse.json({ error: "Blog not found" }, { status: 404 });
+  }
+
+  try {
+    const categories = await fetchBlogCategories(blog.googleAccountId, blog.blogId);
+    const updated = await prisma.bloggerBlog.update({
+      where: { id: blog.id },
+      data: {
+        categories: serializeCategories(categories),
+        categoriesSyncedAt: new Date(),
+      },
+    });
+    return NextResponse.json({
+      ok: true,
+      categories,
+      categoriesSyncedAt: updated.categoriesSyncedAt,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Category sync failed" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function PATCH(req: NextRequest) {
@@ -79,7 +136,10 @@ export async function PATCH(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(updated);
+  return NextResponse.json({
+    ...updated,
+    categoryList: parseCategories(updated.categories),
+  });
 }
 
 export async function DELETE(req: NextRequest) {

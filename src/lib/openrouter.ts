@@ -12,6 +12,7 @@ export type RewriteResult = {
   faqHtml: string;
   tags: string[];
   slug: string;
+  category: string | null;
 };
 
 export type GenerateImageOptions = {
@@ -36,6 +37,7 @@ export async function rewriteArticle(
     title: string;
     content: string;
     url: string;
+    categories?: string[];
   }
 ): Promise<RewriteResult> {
   const settings = await prisma.aiSettings.upsert({
@@ -53,14 +55,22 @@ export async function rewriteArticle(
 
 async function rewriteWithOpenRouter(
   userId: string,
-  input: { title: string; content: string; url: string },
-  settings: { model: string; rewriteStyle: string; toneOfVoice: string; language: string; articleLength: string; seoLevel: string }
+  input: { title: string; content: string; url: string; categories?: string[] },
+  settings: {
+    model: string;
+    rewriteStyle: string;
+    toneOfVoice: string;
+    language: string;
+    articleLength: string;
+    seoLevel: string;
+  }
 ): Promise<RewriteResult> {
   const apiKey = await getOpenRouterKey(userId);
   if (!apiKey) throw new Error("OpenRouter API key not configured");
 
+  const categories = input.categories || [];
   const model = settings.model || process.env.OPENROUTER_DEFAULT_MODEL || "openai/gpt-4o-mini";
-  const system = buildRewriteSystemPrompt(settings);
+  const system = buildRewriteSystemPrompt(settings, categories);
 
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -90,7 +100,7 @@ async function rewriteWithOpenRouter(
 
   const data = await res.json();
   const raw = data.choices?.[0]?.message?.content || "{}";
-  const parsed = JSON.parse(raw) as RewriteResult;
+  const parsed = JSON.parse(raw) as RewriteResult & { category?: string | null };
 
   await prisma.apiUsage.create({
     data: { userId, service: "openrouter-llm", units: 1, meta: JSON.stringify({ model }) },
@@ -109,6 +119,7 @@ async function rewriteWithOpenRouter(
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, ""),
+    category: typeof parsed.category === "string" ? parsed.category : null,
   };
 }
 

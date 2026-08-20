@@ -108,3 +108,41 @@ export async function publishToBlogger(opts: {
   });
   return res.data;
 }
+
+/**
+ * Collect unique labels/categories from recent posts on a Blogger blog.
+ * Blogger has no dedicated categories API — labels live on posts.
+ */
+export async function fetchBlogCategories(
+  googleAccountId: string,
+  blogId: string
+): Promise<string[]> {
+  const blogger = await getAuthedBloggerClient(googleAccountId);
+  const labels = new Set<string>();
+
+  for (const status of [["live"], ["draft"]] as const) {
+    let pageToken: string | undefined;
+    for (let page = 0; page < 3; page++) {
+      const res = await blogger.posts.list({
+        blogId,
+        maxResults: 100,
+        fetchBodies: false,
+        fetchImages: false,
+        status: [...status],
+        pageToken,
+      });
+
+      for (const post of res.data.items || []) {
+        for (const label of post.labels || []) {
+          const trimmed = String(label).trim();
+          if (trimmed) labels.add(trimmed);
+        }
+      }
+
+      pageToken = res.data.nextPageToken || undefined;
+      if (!pageToken) break;
+    }
+  }
+
+  return [...labels].sort((a, b) => a.localeCompare(b));
+}

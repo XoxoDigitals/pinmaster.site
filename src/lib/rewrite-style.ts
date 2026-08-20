@@ -16,13 +16,21 @@ Writing voice (Pin Poster editorial style):
 - Keep SEO strong while remaining readable and human; maintain h2/h3 hierarchy.
 `.trim();
 
-export function buildRewriteSystemPrompt(settings: {
-  rewriteStyle?: string | null;
-  toneOfVoice?: string | null;
-  language?: string | null;
-  articleLength?: string | null;
-  seoLevel?: string | null;
-}): string {
+export function buildRewriteSystemPrompt(
+  settings: {
+    rewriteStyle?: string | null;
+    toneOfVoice?: string | null;
+    language?: string | null;
+    articleLength?: string | null;
+    seoLevel?: string | null;
+  },
+  categories: string[] = []
+): string {
+  const categoryRule =
+    categories.length > 0
+      ? `Category: pick exactly ONE value for "category" from this list (copy spelling exactly): ${JSON.stringify(categories)}.`
+      : `Category: set "category" to null (no blog categories available).`;
+
   return `You are an expert SEO content rewriter. Rewrite articles into 100% unique, high-quality, human-like HTML content.
 Preserve factual meaning. Maintain heading hierarchy (h2/h3). Improve SEO.
 
@@ -32,7 +40,9 @@ User style preferences:
 Style: ${settings.rewriteStyle || "professional"}. Tone: ${settings.toneOfVoice || "informative"}. Language: ${settings.language || "en"}.
 Length: ${settings.articleLength || "similar"}. SEO level: ${settings.seoLevel || "high"}.
 
-Return ONLY valid JSON with keys: title, html, metaTitle, metaDescription, faqHtml, tags (string array), slug.`;
+${categoryRule}
+
+Return ONLY valid JSON with keys: title, html, metaTitle, metaDescription, faqHtml, tags (string array), slug, category (string or null).`;
 }
 
 export function buildPinCopySystemPrompt(settings: {

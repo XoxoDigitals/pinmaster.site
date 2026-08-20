@@ -41,8 +41,16 @@ export async function enqueueCrawl(sitemapSourceId: string, userId?: string) {
   return enqueue(QUEUE_NAMES.CRAWL_SITEMAP, { sitemapSourceId }, { userId });
 }
 
-export async function enqueueExtract(articleId: string, userId?: string) {
-  return enqueue(QUEUE_NAMES.EXTRACT_ARTICLE, { articleId }, { articleId, userId });
+export async function enqueueExtract(
+  articleId: string,
+  userId?: string,
+  scheduledFor?: Date | null
+) {
+  return enqueue(
+    QUEUE_NAMES.EXTRACT_ARTICLE,
+    { articleId },
+    { articleId, userId, scheduledFor: scheduledFor ?? null }
+  );
 }
 
 export async function enqueueRewrite(articleId: string, userId?: string) {
@@ -56,24 +64,28 @@ export async function enqueueImages(articleId: string, userId?: string) {
 export async function enqueueBlogger(
   articleId: string,
   userId?: string,
-  scheduledFor?: Date | null
+  scheduledFor?: Date | null,
+  opts?: { immediate?: boolean }
 ) {
+  const immediate = Boolean(opts?.immediate);
   return enqueue(
     QUEUE_NAMES.PUBLISH_BLOGGER,
-    { articleId },
-    { articleId, userId, scheduledFor }
+    { articleId, ...(immediate ? { immediate: true } : {}) },
+    { articleId, userId, scheduledFor: immediate ? null : scheduledFor }
   );
 }
 
 export async function enqueuePinterest(
   articleId: string,
   userId?: string,
-  scheduledFor?: Date | null
+  scheduledFor?: Date | null,
+  opts?: { immediate?: boolean }
 ) {
+  const immediate = Boolean(opts?.immediate);
   return enqueue(
     QUEUE_NAMES.PUBLISH_PINTEREST,
-    { articleId },
-    { articleId, userId, scheduledFor }
+    { articleId, ...(immediate ? { immediate: true } : {}) },
+    { articleId, userId, scheduledFor: immediate ? null : scheduledFor }
   );
 }
 
