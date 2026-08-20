@@ -182,11 +182,13 @@ async function handleExtract(job: JobRow) {
     data: {
       originalTitle: extracted.title,
       originalContent: extracted.content,
+      metaDescription: extracted.metaDescription || undefined,
       originalMeta: JSON.stringify({
         metaDescription: extracted.metaDescription,
         headings: extracted.headings,
         images: extracted.images,
         tags: extracted.tags,
+        featuredImage: extracted.featuredImage,
       }),
       tags: stringifyTags(extracted.tags),
       status: "REWRITING",

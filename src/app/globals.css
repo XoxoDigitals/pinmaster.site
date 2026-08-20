@@ -215,3 +215,26 @@ textarea {
 .prose-policy p {
   margin: 0;
 }
+
+/* Article before/after HTML preview */
+.article-html-preview img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.75rem 0;
+  border-radius: 8px;
+}
+
+.article-html-preview figure {
+  margin: 0.75rem 0;
+}
+
+.article-html-preview p,
+.article-html-preview li {
+  margin: 0.4rem 0;
+}
+
+.article-html-preview a {
+  color: var(--pin);
+  text-decoration: underline;
+}

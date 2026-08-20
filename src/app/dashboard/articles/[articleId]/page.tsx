@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { PageHeader, Panel, btnGhost, btnPrimary, statusColor } from "@/components/ui";
+import { sanitizeArticleHtml } from "@/lib/sanitize-html";
 
 type PinPreview = {
   id: string;
@@ -38,18 +39,8 @@ type ArticleDetail = {
     name: string;
     googleAccount?: { email: string };
   } | null;
-  originalMeta?: { pinterestImageUrls?: string[] };
+  originalMeta?: { pinterestImageUrls?: string[]; featuredImage?: string | null };
 };
-
-function stripHtml(html: string | null | undefined): string {
-  if (!html) return "";
-  return html
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 export default function ArticleDetailPage() {
   const params = useParams();
@@ -145,11 +136,20 @@ export default function ArticleDetailPage() {
     );
   }
 
-  const beforeText = stripHtml(article.originalContent).slice(0, 4000);
-  const afterHtml = article.rewrittenHtml || "";
+  const beforeHtml = article.originalContent
+    ? sanitizeArticleHtml(article.originalContent)
+    : "";
+  const afterHtml = article.rewrittenHtml
+    ? sanitizeArticleHtml(article.rewrittenHtml)
+    : "";
+  const sourceFeatured =
+    article.originalMeta?.featuredImage ||
+    article.featuredImageUrl ||
+    null;
   const hasImages =
     Boolean(article.pinterestImageUrl) ||
     Boolean(article.originalMeta?.pinterestImageUrls?.length) ||
+    Boolean(sourceFeatured) ||
     pins.some((p) => p.imageUrl);
   const showPinPreview =
     hasImages || pins.length > 0 || ["PUBLISHING", "PINNING", "COMPLETED", "IMAGING"].includes(article.status);
@@ -268,19 +268,39 @@ export default function ArticleDetailPage() {
             <p style={{ margin: "8px 0 0", fontWeight: 600 }}>
               {article.originalTitle || "—"}
             </p>
-            <div
-              style={{
-                marginTop: 10,
-                maxHeight: 320,
-                overflow: "auto",
-                fontSize: 13,
-                lineHeight: 1.55,
-                color: "var(--ink-soft)",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {beforeText || "No original content yet."}
-            </div>
+            {sourceFeatured && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={sourceFeatured}
+                alt=""
+                style={{
+                  display: "block",
+                  width: "100%",
+                  maxHeight: 160,
+                  objectFit: "cover",
+                  marginTop: 10,
+                  borderRadius: 8,
+                }}
+              />
+            )}
+            {beforeHtml ? (
+              <div
+                className="article-html-preview"
+                style={{
+                  marginTop: 10,
+                  maxHeight: 320,
+                  overflow: "auto",
+                  fontSize: 13,
+                  lineHeight: 1.55,
+                  color: "var(--ink)",
+                }}
+                dangerouslySetInnerHTML={{ __html: beforeHtml }}
+              />
+            ) : (
+              <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--ink-soft)" }}>
+                No original content yet.
+              </p>
+            )}
           </Panel>
           <Panel>
             <p style={{ margin: 0, fontWeight: 700, color: "var(--success)" }}>After</p>
@@ -289,6 +309,7 @@ export default function ArticleDetailPage() {
             </p>
             {afterHtml ? (
               <div
+                className="article-html-preview"
                 style={{
                   marginTop: 10,
                   maxHeight: 320,
