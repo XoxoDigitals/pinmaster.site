@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fetchBlogCategories } from "@/lib/google";
 import { parseCategories, serializeCategories } from "@/lib/blog-categories";
+import { purgeOrphanPipelineData } from "@/lib/pipeline-cleanup";
 
 export async function GET() {
   const session = await auth();
@@ -160,6 +161,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const userId = session.user.id;
   await prisma.googleAccount.delete({ where: { id: account.id } });
+  // Blog rows cascade; articles were SetNull. Clear orphans if nothing remains.
+  await purgeOrphanPipelineData(userId);
   return NextResponse.json({ ok: true });
 }

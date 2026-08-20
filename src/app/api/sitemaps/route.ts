@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { enqueueCrawl } from "@/lib/queue";
+import {
+  deleteArticlesAndJobs,
+  deleteCrawlJobsForSitemap,
+  purgeOrphanPipelineData,
+} from "@/lib/pipeline-cleanup";
 
 export async function GET() {
   const session = await auth();
@@ -81,22 +86,18 @@ export async function DELETE(req: NextRequest) {
     where: { sitemapSourceId: id, userId },
     select: { id: true },
   });
-  const articleIds = articles.map((a) => a.id);
 
-  if (articleIds.length > 0) {
-    // JobRun.article uses onDelete: SetNull — remove jobs explicitly
-    await prisma.jobRun.deleteMany({
-      where: { articleId: { in: articleIds } },
-    });
-    // PinRecord cascades from Article
-    await prisma.article.deleteMany({
-      where: { id: { in: articleIds }, userId },
-    });
-  }
+  await deleteCrawlJobsForSitemap(userId, id);
+  await deleteArticlesAndJobs(
+    userId,
+    articles.map((a) => a.id)
+  );
 
   await prisma.sitemapSource.deleteMany({
     where: { id, userId },
   });
+
+  await purgeOrphanPipelineData(userId);
 
   return NextResponse.json({ ok: true });
 }

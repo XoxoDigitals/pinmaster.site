@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { purgeOrphanPipelineData } from "@/lib/pipeline-cleanup";
 
 export async function GET() {
   const session = await auth();
@@ -9,6 +10,8 @@ export async function GET() {
   }
 
   const userId = session.user.id;
+  // Heal legacy orphans left when sitemap/blog deletes used SetNull instead of cascade
+  await purgeOrphanPipelineData(userId);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   const [
