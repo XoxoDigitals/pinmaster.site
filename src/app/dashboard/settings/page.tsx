@@ -282,7 +282,8 @@ function SettingsForm() {
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    const { googleAiKeyPreviews: _previews, ...rest } = settings;
+    const rest = { ...settings };
+    delete rest.googleAiKeyPreviews;
     const payload = {
       ...rest,
       articlePostTimes: articleTimes,

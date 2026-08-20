@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PageHeader, Panel, btnGhost, statusColor } from "@/components/ui";
 
 type Job = {
@@ -22,15 +22,15 @@ export default function LogsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [filter, setFilter] = useState("");
 
-  async function load() {
+  const load = useCallback(async () => {
     const url = filter ? `/api/jobs?status=${filter}` : "/api/jobs";
     const res = await fetch(url);
     setJobs(await res.json());
-  }
+  }, [filter]);
 
   useEffect(() => {
     load();
-  }, [filter]);
+  }, [load]);
 
   async function retry(jobId: string) {
     await fetch("/api/jobs", {

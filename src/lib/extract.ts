@@ -365,7 +365,7 @@ export async function extractArticleContent(url: string): Promise<ExtractedArtic
     "Untitled";
 
   // Prefer Readability HTML; fall back to article/main/body.
-  let rawContent =
+  const rawContent =
     article?.content ||
     $page("article").html() ||
     $page("main").html() ||
