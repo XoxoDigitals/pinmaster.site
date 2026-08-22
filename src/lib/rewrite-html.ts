@@ -337,7 +337,7 @@ export function mergeOriginalImages(
   baseUrl?: string
 ): string {
   const originalBlocks = collectImageBlocks(originalHtml, extraSrcs, baseUrl);
-  let rewritten = markdownImagesToHtml(unescapeIfNeeded(rewrittenHtml || ""), baseUrl).trim();
+  const rewritten = markdownImagesToHtml(unescapeIfNeeded(rewrittenHtml || ""), baseUrl).trim();
 
   if (!originalBlocks.length) return rewritten;
 
