@@ -342,46 +342,100 @@ function isTinyByDims(width?: string | null, height?: string | null): boolean {
   return false;
 }
 
-/** Resolve each URL in a srcset value against the page URL. */
-function absolutizeSrcset(baseUrl: string, srcset: string | undefined): string | undefined {
-  if (!srcset?.trim()) return undefined;
-  const parts = srcset
-    .split(",")
-    .map((chunk) => {
-      const trimmed = chunk.trim();
-      if (!trimmed) return "";
-      const [urlPart, ...rest] = trimmed.split(/\s+/);
-      const abs = resolveUrl(baseUrl, urlPart);
-      if (!abs || isPlaceholderSrc(abs)) return "";
-      return rest.length ? `${abs} ${rest.join(" ")}` : abs;
-    })
-    .filter(Boolean);
-  return parts.length ? parts.join(", ") : undefined;
+const SRCSET_IMAGE_URL_RES = [
+  /https:\/\/spcdn\.shortpixel\.ai\/[^\s"'<>]+/gi,
+  /https:\/\/[^\s"'<>]+\/wp-content\/uploads\/[^\s"'<>]+/gi,
+  /https:\/\/[^\s"'<>]+\.(?:jpe?g|png|webp|gif|avif)(?:\?[^\s"'<>]*)?/gi,
+];
+
+/** Pull absolute image URLs from malformed srcset strings (e.g. ShortPixel comma-heavy paths). */
+export function extractImageUrlsFromText(text: string): string[] {
+  const found: string[] = [];
+  for (const re of SRCSET_IMAGE_URL_RES) {
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text))) {
+      const raw = match[0].replace(/[\s,]+$/, "");
+      if (raw) found.push(raw);
+    }
+  }
+  return found;
 }
 
-/** Prefer largest candidate from srcset (w / x descriptors). */
-function pickBestFromSrcset(srcset: string | undefined, baseUrl: string): string | null {
+function scoreFromFilename(url: string): number {
+  const dim = url.match(/-(\d{2,4})x(\d{2,4})\./i) || url.match(/-(\d{3,4})\./i);
+  return dim ? parseInt(dim[1], 10) : 0;
+}
+
+/** Prefer largest candidate from srcset (w / x descriptors). Handles broken ShortPixel srcset. */
+export function pickBestFromSrcset(srcset: string | undefined, baseUrl: string): string | null {
   if (!srcset?.trim()) return null;
-  let best: { url: string; score: number } | null = null;
-  for (const chunk of srcset.split(",")) {
-    const trimmed = chunk.trim();
-    if (!trimmed) continue;
-    const [urlPart, desc = ""] = trimmed.split(/\s+/);
-    const abs = resolveUrl(baseUrl, urlPart);
+
+  const scored: { url: string; score: number }[] = [];
+  const pairRe = /(https:\/\/[^\s"']+?)\s+(\d+(?:\.\d+)?)(w|x)/gi;
+  let pairMatch: RegExpExecArray | null;
+  while ((pairMatch = pairRe.exec(srcset))) {
+    const abs = resolveUrl(baseUrl, pairMatch[1]);
     if (!abs || isPlaceholderSrc(abs)) continue;
-    let score = 1;
-    const wMatch = /^(\d+)w$/i.exec(desc);
-    const xMatch = /^(\d+(?:\.\d+)?)x$/i.exec(desc);
-    if (wMatch) score = parseInt(wMatch[1], 10);
-    else if (xMatch) score = Math.round(parseFloat(xMatch[1]) * 10000);
-    if (!best || score >= best.score) best = { url: abs, score };
+    const score =
+      pairMatch[3].toLowerCase() === "w"
+        ? parseInt(pairMatch[2], 10)
+        : Math.round(parseFloat(pairMatch[2]) * 10000);
+    scored.push({ url: abs, score });
   }
-  return best?.url || null;
+
+  if (!scored.length && !/shortpixel\.ai/i.test(srcset)) {
+    for (const chunk of srcset.split(",")) {
+      const trimmed = chunk.trim();
+      if (!trimmed) continue;
+      const [urlPart, desc = ""] = trimmed.split(/\s+/);
+      const abs = resolveUrl(baseUrl, urlPart);
+      if (!abs || isPlaceholderSrc(abs)) continue;
+      let score = 1;
+      const wMatch = /^(\d+)w$/i.exec(desc);
+      const xMatch = /^(\d+(?:\.\d+)?)x$/i.exec(desc);
+      if (wMatch) score = parseInt(wMatch[1], 10);
+      else if (xMatch) score = Math.round(parseFloat(xMatch[1]) * 10000);
+      scored.push({ url: abs, score });
+    }
+  }
+
+  if (scored.length) {
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].url;
+  }
+
+  const extracted = extractImageUrlsFromText(srcset)
+    .map((raw) => resolveUrl(baseUrl, raw))
+    .filter((abs): abs is string => Boolean(abs && !isPlaceholderSrc(abs) && abs.startsWith("http")));
+  if (!extracted.length) return null;
+
+  let best = extracted[0];
+  let bestScore = scoreFromFilename(best);
+  for (const url of extracted.slice(1)) {
+    const score = scoreFromFilename(url);
+    if (score >= bestScore) {
+      best = url;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 function pickBestImgSrc($: cheerio.CheerioAPI, el: Element, baseUrl: string): string | null {
   const $el = $(el);
   if (isTinyByDims($el.attr("width"), $el.attr("height"))) return null;
+
+  const src = $el.attr("src");
+  const resolvedSrc = resolveUrl(baseUrl, src);
+  if (
+    resolvedSrc &&
+    resolvedSrc.startsWith("http") &&
+    !isPlaceholderSrc(resolvedSrc) &&
+    shouldKeepImageUrl(resolvedSrc)
+  ) {
+    return resolvedSrc;
+  }
 
   const lazyCandidates = LAZY_ATTRS.map((attr) => $el.attr(attr));
   const srcset =
@@ -389,23 +443,15 @@ function pickBestImgSrc($: cheerio.CheerioAPI, el: Element, baseUrl: string): st
     $el.attr("data-srcset") ||
     $el.attr("srcset");
   const fromSrcset = pickBestFromSrcset(srcset, baseUrl);
-  const src = $el.attr("src");
 
-  // Prefer explicit lazy/hi-res attrs and largest srcset over placeholder src.
-  const ordered = [
-    ...lazyCandidates,
-    fromSrcset,
-    !isPlaceholderSrc(src || "") ? src : null,
-  ];
-
+  const ordered = [...lazyCandidates, fromSrcset, !isPlaceholderSrc(src || "") ? src : null];
   for (const c of ordered) {
     const abs = typeof c === "string" ? resolveUrl(baseUrl, c) : c;
     if (!abs || isPlaceholderSrc(abs)) continue;
-    if (abs.startsWith("http")) return abs;
+    if (abs.startsWith("http") && shouldKeepImageUrl(abs)) return abs;
   }
 
-  if (fromSrcset) return fromSrcset;
-  return null;
+  return fromSrcset;
 }
 
 function backgroundUrlFromStyle(style: string | undefined, baseUrl: string): string | null {
@@ -524,25 +570,21 @@ function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
         $el.remove();
         continue;
       }
-      $el.attr("src", abs);
-      const srcset = absolutizeSrcset(
-        baseUrl,
-        $el.attr("srcset") || $el.attr("data-srcset") || $el.attr("data-lazy-srcset")
-      );
-      if (srcset) $el.attr("srcset", srcset);
-      else $el.removeAttr("srcset");
-      if (!$el.attr("alt")) $el.attr("alt", "");
-      $el.attr("loading", "lazy");
+      const alt = ($el.attr("alt") || "").replace(/"/g, "&quot;");
+      $el.replaceWith(`<img src="${abs}" alt="${alt}" loading="lazy" />`);
+      continue;
     }
 
     if (tag === "source") {
-      const src = resolveUrl(baseUrl, $el.attr("src"));
-      if (src && !isPlaceholderSrc(src)) $el.attr("src", src);
-      const srcset = absolutizeSrcset(
-        baseUrl,
-        $el.attr("srcset") || $el.attr("data-srcset") || $el.attr("data-lazy-srcset")
-      );
-      if (srcset) $el.attr("srcset", srcset);
+      const best =
+        pickBestFromSrcset(
+          $el.attr("srcset") || $el.attr("data-srcset") || $el.attr("data-lazy-srcset"),
+          baseUrl
+        ) || resolveUrl(baseUrl, $el.attr("src"));
+      if (best && !isPlaceholderSrc(best)) $el.attr("src", best);
+      $el.removeAttr("srcset");
+      $el.removeAttr("data-srcset");
+      $el.removeAttr("data-lazy-srcset");
     }
 
     if (tag === "a") {
@@ -597,19 +639,34 @@ function extractFeaturedImage($: cheerio.CheerioAPI, baseUrl: string, contentIma
   return contentImages[0] || null;
 }
 
-function htmlHasImgSrc(html: string, src: string, baseUrl?: string): boolean {
-  if (!src) return false;
-  const key = normalizeImageKey(src);
+function isFeaturedFirst(html: string, featuredImage: string, baseUrl?: string): boolean {
+  const key = normalizeImageKey(featuredImage);
   const $ = cheerio.load(html || "", { xml: false }, false);
-  let found = false;
-  $("img").each((_, el) => {
-    const s =
-      pickBestImgSrc($, el as Element, baseUrl || src) ||
-      $(el).attr("src") ||
+  const firstFigure = $("figure").first();
+  if (firstFigure.length) {
+    const img = firstFigure.find("img").first();
+    if (img.length) {
+      const src =
+        pickBestImgSrc($, img.get(0) as Element, baseUrl || featuredImage) ||
+        img.attr("src") ||
+        "";
+      if (src && normalizeImageKey(src) === key) {
+        if (!firstFigure.attr("class")?.includes("featured")) {
+          firstFigure.addClass("featured");
+        }
+        return true;
+      }
+    }
+  }
+  const firstImg = $("img").first();
+  if (firstImg.length) {
+    const src =
+      pickBestImgSrc($, firstImg.get(0) as Element, baseUrl || featuredImage) ||
+      firstImg.attr("src") ||
       "";
-    if (s && (s === src || normalizeImageKey(s) === key)) found = true;
-  });
-  return found;
+    if (src && normalizeImageKey(src) === key) return true;
+  }
+  return false;
 }
 
 function ensureFeaturedInHtml(
@@ -619,7 +676,9 @@ function ensureFeaturedInHtml(
   baseUrl?: string
 ): string {
   if (!featuredImage) return html;
-  if (htmlHasImgSrc(html, featuredImage, baseUrl)) return html;
+  if (isFeaturedFirst(html, featuredImage, baseUrl)) {
+    return cheerio.load(html || "", { xml: false }, false).html() || html;
+  }
   const alt = title.replace(/"/g, "&quot;");
   return `<figure class="featured"><img src="${featuredImage}" alt="${alt}" loading="lazy" /></figure>\n${html}`;
 }

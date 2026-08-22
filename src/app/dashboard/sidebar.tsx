@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { APP_VERSION } from "@/lib/version";
 
 const links = [
   { href: "/dashboard", label: "Overview" },
@@ -50,6 +51,9 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
       >
         ContentOps
       </Link>
+      <p style={{ margin: "0 0 2px", fontSize: 11, color: "var(--ink-soft)", opacity: 0.85 }}>
+        v{APP_VERSION}
+      </p>
       <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--ink-soft)" }}>
         Pin & publish studio
       </p>

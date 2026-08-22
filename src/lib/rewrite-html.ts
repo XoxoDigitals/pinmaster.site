@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
-import { isContentImageUrl } from "./extract";
+import { isContentImageUrl, pickBestFromSrcset } from "./extract";
 
 export type ImageBlock = { src: string; html: string };
 
@@ -62,24 +62,8 @@ function normalizeSrc(src: string, baseUrl?: string): string {
 
 function srcFromSrcset(srcset: string | undefined, baseUrl?: string): string {
   if (!srcset?.trim()) return "";
-  let best = "";
-  let bestScore = -1;
-  for (const chunk of srcset.split(",")) {
-    const parts = chunk.trim().split(/\s+/);
-    const url = normalizeSrc(parts[0] || "", baseUrl);
-    if (!url || url.startsWith("data:")) continue;
-    const desc = parts[1] || "";
-    let score = 1;
-    const w = /^(\d+)w$/i.exec(desc);
-    const x = /^(\d+(?:\.\d+)?)x$/i.exec(desc);
-    if (w) score = parseInt(w[1], 10);
-    else if (x) score = Math.round(parseFloat(x[1]) * 10000);
-    if (score >= bestScore) {
-      bestScore = score;
-      best = url;
-    }
-  }
-  return best;
+  const best = pickBestFromSrcset(srcset, baseUrl || "https://placeholder.local");
+  return best ? normalizeSrc(best, baseUrl) : "";
 }
 
 function isPlaceholderNodeSrc(src: string): boolean {
@@ -90,6 +74,20 @@ function isPlaceholderNodeSrc(src: string): boolean {
 function pickNodeSrc($: cheerio.CheerioAPI, el: Element, baseUrl?: string): string {
   const $el = $(el);
   const tag = (el.tagName || "").toLowerCase();
+
+  if (tag === "a") {
+    const img = $el.find("img").get(0) as Element | undefined;
+    if (img) {
+      const fromImg = pickNodeSrc($, img, baseUrl);
+      if (fromImg) return fromImg;
+    }
+    const href = $el.attr("href") || "";
+    if (href && isContentImageUrl(href)) {
+      return normalizeSrc(href, baseUrl);
+    }
+    return "";
+  }
+
   const lazy = [
     $el.attr("data-src"),
     $el.attr("data-lazy-src"),
@@ -98,13 +96,16 @@ function pickNodeSrc($: cheerio.CheerioAPI, el: Element, baseUrl?: string): stri
     $el.attr("data-bg"),
     $el.attr("data-background"),
     $el.attr("data-background-image"),
-    tag === "a" ? $el.attr("href") : undefined,
   ];
   const fromSrcset = srcFromSrcset(
     $el.attr("data-lazy-srcset") || $el.attr("data-srcset") || $el.attr("srcset"),
     baseUrl
   );
   const src = $el.attr("src");
+  const resolvedSrc = normalizeSrc(src || "", baseUrl);
+  if (resolvedSrc && !isPlaceholderNodeSrc(resolvedSrc) && resolvedSrc.startsWith("http")) {
+    return resolvedSrc;
+  }
   const ordered = [...lazy, fromSrcset, !isPlaceholderNodeSrc(src || "") ? src : undefined];
   for (const c of ordered) {
     const normalized = normalizeSrc(c || "", baseUrl);
@@ -185,7 +186,14 @@ function collectBlocksFromRegex(html: string, baseUrl?: string): ImageBlock[] {
     const srcMatch =
       chunk.match(/\s(?:src|data-src|data-lazy-src|data-original)\s*=\s*["']([^"']+)["']/i) ||
       chunk.match(/\ssrcset\s*=\s*["']([^"']+)["']/i);
-    const src = srcMatch ? normalizeSrc(srcMatch[1].split(",")[0].trim().split(/\s+/)[0], baseUrl) : "";
+    let src = "";
+    if (srcMatch) {
+      const raw = srcMatch[1];
+      src =
+        /\ssrcset\s*=/i.test(srcMatch[0])
+          ? srcFromSrcset(raw, baseUrl) || normalizeSrc(raw.split(",")[0].trim().split(/\s+/)[0], baseUrl)
+          : normalizeSrc(raw, baseUrl);
+    }
     const block = blockFromSrc(src, baseUrl, chunk.includes("<img") ? chunk : figureHtml(src));
     if (!block || seen.has(block.src)) continue;
     seen.add(block.src);
@@ -375,9 +383,22 @@ function distributeBlocks(rewritten: string, missing: ImageBlock[]): string {
   return out.trim();
 }
 
+function stripImageBySrc(html: string, src: string, baseUrl?: string): string {
+  const key = normalizeSrc(src, baseUrl);
+  if (!key) return html;
+  const $ = loadFragment(html);
+  $("figure, picture, img").each((_, el) => {
+    const elSrc = pickNodeSrc($, el as Element, baseUrl);
+    if (elSrc && normalizeSrc(elSrc, baseUrl) === key) {
+      $(el).remove();
+    }
+  });
+  return ($.html() || html).trim();
+}
+
 /**
  * Guarantee every original content/featured image appears as a real <img> in rewritten HTML.
- * Featured/first image is placed at the top; remaining missing images are interleaved.
+ * Featured/first image is always placed at the top; remaining missing images are interleaved.
  */
 export function mergeOriginalImages(
   originalHtml: string,
@@ -397,17 +418,17 @@ export function mergeOriginalImages(
     return originalBlocks.map((b) => b.html).join("\n");
   }
 
-  const present = collectPresentSrcs(rewritten, baseUrl);
-  const missing = originalBlocks.filter((block) => !present.has(block.src));
-  if (!missing.length) return rewritten;
-
   const featured = originalBlocks[0];
   let body = rewritten;
-  let rest = missing;
-  if (featured && missing.some((b) => b.src === featured.src)) {
-    body = `${figureHtml(featured.src, "", true)}\n${body}`;
-    rest = missing.filter((b) => b.src !== featured.src);
+  if (featured) {
+    body = stripImageBySrc(body, featured.src, baseUrl);
+    body = `${figureHtml(featured.src, "", true)}\n${body}`.trim();
   }
+
+  const present = collectPresentSrcs(body, baseUrl);
+  const missing = originalBlocks.filter((block) => !present.has(block.src));
+  const rest = missing.filter((block) => !featured || block.src !== featured.src);
+  if (!rest.length) return body;
 
   return distributeBlocks(body, rest);
 }
