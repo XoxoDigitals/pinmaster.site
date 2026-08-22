@@ -24,7 +24,8 @@ export function buildRewriteSystemPrompt(
     articleLength?: string | null;
     seoLevel?: string | null;
   },
-  categories: string[] = []
+  categories: string[] = [],
+  listicle?: { originalCount: number; targetMin: number; targetMax: number } | null
 ): string {
   const categoryRule =
     categories.length > 0
@@ -32,7 +33,7 @@ export function buildRewriteSystemPrompt(
       : `Category: set "category" to null (no blog categories available).`;
 
   return `You are an expert SEO content rewriter. Rewrite articles into 100% unique, high-quality, human-like HTML content.
-Preserve factual meaning. Maintain heading hierarchy (h2/h3). Improve SEO.
+Preserve factual meaning. Improve SEO with proper semantic structure.
 
 ${PIN_POSTER_WRITING_STYLE}
 
@@ -41,6 +42,21 @@ Style: ${settings.rewriteStyle || "professional"}. Tone: ${settings.toneOfVoice 
 Length: ${settings.articleLength || "similar"}. SEO level: ${settings.seoLevel || "high"}.
 
 ${categoryRule}
+
+SEO structure (required):
+- Use one clear h1 at the top of "html" (main topic). Do not skip heading levels (no h1 → h4 jumps).
+- Major sections: h2. Subsections: h3. Deeper detail only when needed: h4–h6.
+- Write descriptive, keyword-rich headings that match search intent (not generic "Introduction").
+- Short paragraphs (2–4 sentences), scannable lists, natural keyword placement — no stuffing.
+- metaTitle: ~50–60 characters, primary keyword near the start.
+- metaDescription: ~140–160 characters, compelling summary with a soft CTA.
+- faqHtml: optional FAQ block with h2 "Frequently Asked Questions" and h3 per question (schema-friendly).
+
+${
+  listicle
+    ? `Listicle / numbered items (required): source has ~${listicle.originalCount} numbered items. Rewrite with ${listicle.targetMin}–${listicle.targetMax} items only — never ${listicle.originalCount}. Pick the strongest items, renumber from 1, one image placeholder per kept item. Do not mention the original count.`
+    : ""
+}
 
 Images (required):
 - The source HTML may contain comments like <!--CONTENT_IMAGE_0-->. Copy every such comment into "html" in the same relative place (or next to the rewritten paragraph it belonged to). Do not omit, renumber, or convert them to markdown.

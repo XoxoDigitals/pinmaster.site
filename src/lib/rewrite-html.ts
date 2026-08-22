@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
-import { isContentImageUrl, pickBestFromSrcset } from "./extract";
+import { isContentImageUrl, pickBestFromSrcset, imageIdentityKey } from "./extract";
 
 export type ImageBlock = { src: string; html: string };
 
@@ -60,6 +60,11 @@ function normalizeSrc(src: string, baseUrl?: string): string {
   }
 }
 
+function srcKey(src: string, baseUrl?: string): string {
+  const abs = normalizeSrc(src, baseUrl);
+  return abs ? imageIdentityKey(abs) : "";
+}
+
 function srcFromSrcset(srcset: string | undefined, baseUrl?: string): string {
   if (!srcset?.trim()) return "";
   const best = pickBestFromSrcset(srcset, baseUrl || "https://placeholder.local");
@@ -114,6 +119,25 @@ function pickNodeSrc($: cheerio.CheerioAPI, el: Element, baseUrl?: string): stri
   return fromSrcset || "";
 }
 
+function figureBlockFromElement(
+  $: cheerio.CheerioAPI,
+  el: Element,
+  src: string,
+  featured: boolean
+): string {
+  const $el = $(el);
+  const alt = decodeEntities($el.find("img").first().attr("alt") || "");
+  let html = figureHtml(src, alt, featured);
+  const figcaption = $el.find("figcaption").first();
+  if (figcaption.length) {
+    const capHtml = figcaption.html()?.trim();
+    if (capHtml) {
+      html = html.replace("</figure>", `<figcaption>${capHtml}</figcaption></figure>`);
+    }
+  }
+  return html;
+}
+
 function figureHtml(src: string, alt = "", featured = false): string {
   const abs = src.startsWith("http") ? src : absolutizeUrl(src);
   if (!abs.startsWith("http")) return "";
@@ -143,17 +167,13 @@ function collectBlocksFromDom(html: string, baseUrl?: string): ImageBlock[] {
       if (!src) src = normalizeSrc($el.find("a[href]").attr("href") || "", baseUrl);
     }
     const block = blockFromSrc(src, baseUrl, $.html(el) || undefined);
-    if (!block || seen.has(block.src)) return;
-    seen.add(block.src);
+    const key = srcKey(src, baseUrl);
+    if (!block || !key || seen.has(key)) return;
+    seen.add(key);
     if (block.html && !/<img\b/i.test(block.html)) {
       block.html = figureHtml(block.src);
-    } else if (block.html) {
-      const $wrap = loadFragment(block.html);
-      $wrap("img").each((_, img) => {
-        const abs = pickNodeSrc($wrap, img as Element, baseUrl);
-        if (abs) $wrap(img).attr("src", abs);
-      });
-      block.html = $wrap.html() || figureHtml(block.src);
+    } else {
+      block.html = figureBlockFromElement($, el as Element, block.src, blocks.length === 0);
     }
     blocks.push(block);
   };
@@ -195,8 +215,9 @@ function collectBlocksFromRegex(html: string, baseUrl?: string): ImageBlock[] {
           : normalizeSrc(raw, baseUrl);
     }
     const block = blockFromSrc(src, baseUrl, chunk.includes("<img") ? chunk : figureHtml(src));
-    if (!block || seen.has(block.src)) continue;
-    seen.add(block.src);
+    const key = srcKey(src, baseUrl);
+    if (!block || !key || seen.has(key)) continue;
+    seen.add(key);
     blocks.push(block);
   }
   return blocks;
@@ -212,14 +233,16 @@ export function collectImageBlocks(
   const merged: ImageBlock[] = [];
   const seen = new Set<string>();
   for (const block of [...fromDom, ...fromRegex]) {
-    if (!block.src || seen.has(block.src)) continue;
-    seen.add(block.src);
+    const key = srcKey(block.src, baseUrl);
+    if (!block.src || !key || seen.has(key)) continue;
+    seen.add(key);
     merged.push(block);
   }
   for (const src of extraSrcs) {
     const block = blockFromSrc(src, baseUrl);
-    if (!block || seen.has(block.src)) continue;
-    seen.add(block.src);
+    const key = srcKey(src, baseUrl);
+    if (!block || !key || seen.has(key)) continue;
+    seen.add(key);
     merged.push(block);
   }
   return merged;
@@ -230,12 +253,14 @@ function collectPresentSrcs(html: string, baseUrl?: string): Set<string> {
   const $ = loadFragment(html);
   $("img").each((_, el) => {
     const src = pickNodeSrc($, el as Element, baseUrl);
-    if (src) present.add(src);
+    const key = srcKey(src, baseUrl);
+    if (key) present.add(key);
   });
   $("source").each((_, el) => {
     const src =
       pickNodeSrc($, el as Element, baseUrl) || srcFromSrcset($(el).attr("srcset"), baseUrl);
-    if (src) present.add(src);
+    const key = srcKey(src, baseUrl);
+    if (key) present.add(key);
   });
   return present;
 }
@@ -289,14 +314,14 @@ export function prepareContentForRewrite(
     const src =
       pickNodeSrc($, el, baseUrl) ||
       normalizeSrc($(el).find("img").attr("src") || $(el).find("a[href]").attr("href") || "", baseUrl);
-    if (!src || seen.has(src)) {
+    const key = srcKey(src, baseUrl);
+    if (!src || !key || seen.has(key)) {
       $(el).remove();
       return;
     }
-    seen.add(src);
+    seen.add(key);
     const index = blocks.length;
-    let blockHtml = $.html(el) || figureHtml(src);
-    if (!/<img\b/i.test(blockHtml)) blockHtml = figureHtml(src);
+    const blockHtml = figureBlockFromElement($, el, src, index === 0);
     blocks.push({ src, html: blockHtml });
     $(el).replaceWith(marker(index));
   };
@@ -376,7 +401,7 @@ function distributeBlocks(rewritten: string, missing: ImageBlock[]): string {
   // Append any blocks that somehow didn't land as real <img> tags.
   let out = ($.html() || rewritten).trim();
   const present = collectPresentSrcs(out);
-  const stillMissing = missing.filter((b) => !present.has(b.src));
+  const stillMissing = missing.filter((b) => !present.has(srcKey(b.src)));
   if (stillMissing.length) {
     out = `${out}\n${stillMissing.map((b) => b.html).join("\n")}`;
   }
@@ -384,12 +409,12 @@ function distributeBlocks(rewritten: string, missing: ImageBlock[]): string {
 }
 
 function stripImageBySrc(html: string, src: string, baseUrl?: string): string {
-  const key = normalizeSrc(src, baseUrl);
+  const key = srcKey(src, baseUrl);
   if (!key) return html;
   const $ = loadFragment(html);
   $("figure, picture, img").each((_, el) => {
     const elSrc = pickNodeSrc($, el as Element, baseUrl);
-    if (elSrc && normalizeSrc(elSrc, baseUrl) === key) {
+    if (elSrc && srcKey(elSrc, baseUrl) === key) {
       $(el).remove();
     }
   });
@@ -426,8 +451,12 @@ export function mergeOriginalImages(
   }
 
   const present = collectPresentSrcs(body, baseUrl);
-  const missing = originalBlocks.filter((block) => !present.has(block.src));
-  const rest = missing.filter((block) => !featured || block.src !== featured.src);
+  const missing = originalBlocks.filter(
+    (block) => !present.has(srcKey(block.src, baseUrl))
+  );
+  const rest = missing.filter(
+    (block) => !featured || srcKey(block.src, baseUrl) !== srcKey(featured.src, baseUrl)
+  );
   if (!rest.length) return body;
 
   return distributeBlocks(body, rest);

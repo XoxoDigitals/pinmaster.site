@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { buildRewriteSystemPrompt } from "@/lib/rewrite-style";
+import {
+  buildRewriteUserContent,
+  type ListicleRewriteHint,
+} from "@/lib/rewrite-listicle";
 
 export type GoogleRewriteResult = {
   title: string;
@@ -118,7 +122,8 @@ async function callGemini(
 
 export async function rewriteWithGoogleAiStudio(
   userId: string,
-  input: { title: string; content: string; url: string; categories?: string[] }
+  input: { title: string; content: string; url: string; categories?: string[] },
+  listicle: ListicleRewriteHint | null = null
 ): Promise<GoogleRewriteResult> {
   const settings = await prisma.aiSettings.upsert({
     where: { userId },
@@ -133,8 +138,8 @@ export async function rewriteWithGoogleAiStudio(
 
   const categories = input.categories || [];
   const model = settings.googleAiModel || "gemini-2.0-flash";
-  const system = buildRewriteSystemPrompt(settings, categories);
-  const userContent = `Source URL: ${input.url}\nOriginal title: ${input.title}\n\nOriginal content:\n${input.content.slice(0, 24000)}`;
+  const system = buildRewriteSystemPrompt(settings, categories, listicle);
+  const userContent = buildRewriteUserContent({ ...input, listicle });
 
   const start = ((settings.googleAiKeyIndex % keys.length) + keys.length) % keys.length;
   const errors: string[] = [];

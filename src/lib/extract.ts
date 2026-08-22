@@ -312,18 +312,54 @@ function resolveUrl(baseUrl: string, maybeRelative: string | undefined | null): 
 }
 
 function normalizeImageKey(url: string): string {
+  return imageIdentityKey(url);
+}
+
+/** Same photo at different WP sizes / srcset variants maps to one key. */
+export function imageIdentityKey(url: string): string {
+  if (!url) return "";
   try {
     const u = new URL(url);
     u.hash = "";
-    // Drop common cache-busters but keep path distinctness.
     u.searchParams.delete("w");
     u.searchParams.delete("h");
     u.searchParams.delete("width");
     u.searchParams.delete("height");
+    u.searchParams.delete("resize");
+    u.pathname = u.pathname.replace(/-\d+x\d+(?=\.[a-z0-9]+$)/i, "");
     return u.href;
   } catch {
-    return url.split("#")[0];
+    return url
+      .split("#")[0]
+      .replace(/-\d+x\d+(?=\.[a-z0-9]+(?:\?|$))/i, "");
   }
+}
+
+function dedupeDuplicateImagesInHtml(html: string, baseUrl: string): string {
+  const $ = cheerio.load(html || "", { xml: false }, false);
+
+  $("figure, picture, a").each((_, container) => {
+    const $c = $(container);
+    const seen = new Set<string>();
+    $c.find("img").each((_, img) => {
+      const $img = $(img);
+      const src = pickBestImgSrc($, img as Element, baseUrl) || $img.attr("src") || "";
+      const key = imageIdentityKey(src);
+      if (!key || !src.startsWith("http")) {
+        $img.remove();
+        return;
+      }
+      if (seen.has(key)) {
+        $img.remove();
+        return;
+      }
+      seen.add(key);
+      const alt = ($img.attr("alt") || "").replace(/"/g, "&quot;");
+      $img.replaceWith(`<img src="${src}" alt="${alt}" loading="lazy" />`);
+    });
+  });
+
+  return ($.html() || "").trim();
 }
 
 function isPlaceholderSrc(url: string | null | undefined): boolean {
@@ -615,7 +651,8 @@ function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
     }
   }
 
-  return ($.html() || "").trim();
+  const cleaned = ($.html() || "").trim();
+  return dedupeDuplicateImagesInHtml(cleaned, baseUrl);
 }
 
 function extractFeaturedImage($: cheerio.CheerioAPI, baseUrl: string, contentImages: string[]): string | null {

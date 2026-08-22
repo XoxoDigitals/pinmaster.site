@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import { buildRewriteSystemPrompt } from "@/lib/rewrite-style";
+import { analyzeListicleContent, buildRewriteUserContent } from "@/lib/rewrite-listicle";
 import { rewriteWithGoogleAiStudio } from "@/lib/google-ai";
 import { generateSnapgenImage, snapgenAspectForPin } from "@/lib/snapgen";
 import { finalizeRewrittenHtml, prepareContentForRewrite } from "@/lib/rewrite-html";
@@ -49,12 +50,13 @@ export async function rewriteArticle(
   });
 
   const prepared = prepareContentForRewrite(input.content, input.url);
+  const listicle = analyzeListicleContent(input.content);
   const payload = { ...input, content: prepared.markedHtml };
 
   const result =
     settings.contentProvider === "google_ai_studio"
-      ? await rewriteWithGoogleAiStudio(userId, payload)
-      : await rewriteWithOpenRouter(userId, payload, settings);
+      ? await rewriteWithGoogleAiStudio(userId, payload, listicle)
+      : await rewriteWithOpenRouter(userId, payload, settings, listicle);
 
   return {
     ...result,
@@ -75,14 +77,15 @@ async function rewriteWithOpenRouter(
     language: string;
     articleLength: string;
     seoLevel: string;
-  }
+  },
+  listicle: ReturnType<typeof analyzeListicleContent>
 ): Promise<RewriteResult> {
   const apiKey = await getOpenRouterKey(userId);
   if (!apiKey) throw new Error("OpenRouter API key not configured");
 
   const categories = input.categories || [];
   const model = settings.model || process.env.OPENROUTER_DEFAULT_MODEL || "openai/gpt-4o-mini";
-  const system = buildRewriteSystemPrompt(settings, categories);
+  const system = buildRewriteSystemPrompt(settings, categories, listicle);
 
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -100,7 +103,7 @@ async function rewriteWithOpenRouter(
         { role: "system", content: system },
         {
           role: "user",
-          content: `Source URL: ${input.url}\nOriginal title: ${input.title}\n\nOriginal content:\n${input.content.slice(0, 24000)}`,
+          content: buildRewriteUserContent({ ...input, listicle }),
         },
       ],
     }),
