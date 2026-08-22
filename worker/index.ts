@@ -11,7 +11,7 @@ import {
   parseTags,
   stringifyTags,
 } from "../src/lib/queue";
-import { parseSitemapEntries, extractArticleContent, titleFromSourceUrl, shouldRefreshArticleImages, countHtmlImages } from "../src/lib/extract";
+import { parseSitemapEntries, extractArticleContent, titleFromSourceUrl, shouldRefreshArticleImages, countHtmlImages, ensureFeaturedInHtml } from "../src/lib/extract";
 import { mergeOriginalImages } from "../src/lib/rewrite-html";
 import { hashUrl } from "../src/lib/crypto";
 import { rewriteArticle, generateImage, buildImagePrompt } from "../src/lib/openrouter";
@@ -515,17 +515,31 @@ async function handleBlogger(job: JobRow) {
   const labels = categoryLabel
     ? [categoryLabel]
     : parseTags(article.tags).slice(0, 5);
-  const content =
+  const title = article.rewrittenTitle || article.originalTitle || "Untitled";
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
+  } catch {
+    meta = {};
+  }
+  const featuredSrc =
+    (typeof meta.featuredImage === "string" ? meta.featuredImage : null) ||
+    article.featuredImageUrl ||
+    null;
+  let content =
     (article.rewrittenHtml && article.rewrittenHtml.trim()) ||
     article.originalContent ||
     "";
+  if (content.trim() && featuredSrc) {
+    content = ensureFeaturedInHtml(content, featuredSrc, title, article.sourceUrl);
+  }
   if (!content.trim()) {
     throw new Error("No article HTML to publish");
   }
   const post = await publishToBlogger({
     googleAccountId: article.bloggerBlog.googleAccountId,
     blogId: article.bloggerBlog.blogId,
-    title: article.rewrittenTitle || article.originalTitle || "Untitled",
+    title,
     content,
     labels,
     isDraft,

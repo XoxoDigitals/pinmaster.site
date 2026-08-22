@@ -289,10 +289,10 @@ export function shouldRefreshArticleImages(
       : metaImages.length;
 
   if (!originalContent?.trim()) return true;
-  if (contentCount < 2) return true;
-  if (metaCount === 0 && contentCount < 3) return true;
+  // Listicle posts (30+ images) often arrive as featured-only after a bad extract.
+  if (contentCount < 10) return true;
   if (metaCount >= 2 && contentCount < metaCount) return true;
-  if (sitemapImages.length >= 2 && contentCount < Math.min(sitemapImages.length, 3)) return true;
+  if (sitemapImages.length >= 2 && contentCount < Math.min(sitemapImages.length, 10)) return true;
   return false;
 }
 
@@ -669,7 +669,8 @@ function isFeaturedFirst(html: string, featuredImage: string, baseUrl?: string):
   return false;
 }
 
-function ensureFeaturedInHtml(
+/** Prepend featured/banner as first figure when missing from stored HTML. */
+export function ensureFeaturedInHtml(
   html: string,
   featuredImage: string | null,
   title: string,

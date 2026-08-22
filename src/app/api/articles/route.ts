@@ -306,7 +306,12 @@ export async function POST(req: NextRequest) {
       if (bloggerDone) {
         await enqueuePinterest(articleId, userId, null, { immediate: true });
       } else if (article.originalContent || article.rewrittenHtml) {
-        await enqueueBlogger(articleId, userId, null, { immediate: true });
+        const meta = parseMeta(article.originalMeta);
+        if (shouldRefreshArticleImages(article.originalContent, meta)) {
+          await enqueueExtract(articleId, userId);
+        } else {
+          await enqueueBlogger(articleId, userId, null, { immediate: true });
+        }
       } else {
         await enqueueExtract(articleId, userId);
       }
