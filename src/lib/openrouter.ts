@@ -39,6 +39,7 @@ export async function rewriteArticle(
     content: string;
     url: string;
     categories?: string[];
+    extraImageUrls?: string[];
   }
 ): Promise<RewriteResult> {
   const settings = await prisma.aiSettings.upsert({
@@ -47,7 +48,7 @@ export async function rewriteArticle(
     create: { userId },
   });
 
-  const prepared = prepareContentForRewrite(input.content);
+  const prepared = prepareContentForRewrite(input.content, input.url);
   const payload = { ...input, content: prepared.markedHtml };
 
   const result =
@@ -57,7 +58,10 @@ export async function rewriteArticle(
 
   return {
     ...result,
-    html: finalizeRewrittenHtml(input.content, prepared.blocks, result.html),
+    html: finalizeRewrittenHtml(input.content, prepared.blocks, result.html, {
+      extraSrcs: input.extraImageUrls,
+      baseUrl: input.url,
+    }),
   };
 }
 

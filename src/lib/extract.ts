@@ -328,13 +328,12 @@ function collectImagesFromHtml(html: string, baseUrl: string): string[] {
  * Resolves relative img src / srcset to absolute URLs.
  */
 function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
-  const $ = cheerio.load(`<div id="__article-root">${rawHtml}</div>`, { xml: false });
-  const $root = $("#__article-root");
+  const $ = cheerio.load(rawHtml || "", { xml: false }, false);
 
-  $root.find(JUNK_SELECTORS).remove();
+  $(JUNK_SELECTORS).remove();
 
   // Bottom-up so unwraps leave children already processed.
-  const elements = $root.find("*").toArray().reverse() as Element[];
+  const elements = $("*").toArray().reverse() as Element[];
   for (const el of elements) {
     const tag = el.tagName.toLowerCase();
     const $el = $(el);
@@ -396,7 +395,7 @@ function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
     }
   }
 
-  return ($root.html() || "").trim();
+  return ($.html() || "").trim();
 }
 
 function extractFeaturedImage($: cheerio.CheerioAPI, baseUrl: string, contentImages: string[]): string | null {
@@ -423,9 +422,20 @@ function extractFeaturedImage($: cheerio.CheerioAPI, baseUrl: string, contentIma
   return contentImages[0] || null;
 }
 
+function htmlHasImgSrc(html: string, src: string): boolean {
+  if (!src) return false;
+  const $ = cheerio.load(html || "", { xml: false }, false);
+  let found = false;
+  $("img").each((_, el) => {
+    const s = $(el).attr("src") || $(el).attr("data-src") || "";
+    if (s === src || (s && src.includes(s.split("?")[0]))) found = true;
+  });
+  return found;
+}
+
 function ensureFeaturedInHtml(html: string, featuredImage: string | null, title: string): string {
   if (!featuredImage) return html;
-  if (html.includes(featuredImage)) return html;
+  if (htmlHasImgSrc(html, featuredImage)) return html;
   const alt = title.replace(/"/g, "&quot;");
   return `<figure><img src="${featuredImage}" alt="${alt}" loading="lazy" /></figure>\n${html}`;
 }
@@ -433,9 +443,9 @@ function ensureFeaturedInHtml(html: string, featuredImage: string | null, title:
 function collectImagesFromContentRoots($page: cheerio.CheerioAPI, baseUrl: string): string[] {
   const $root = $page(CONTENT_ROOT_SELECTORS).first();
   const scope = $root.length ? $root : $page("body");
-  const cloneHtml = cheerio.load(`<div id="c">${scope.html() || ""}</div>`);
-  cloneHtml("#c").find(JUNK_SELECTORS).remove();
-  return collectImagesFromHtml(cloneHtml("#c").html() || "", baseUrl);
+  const cloneHtml = cheerio.load(scope.html() || "", { xml: false }, false);
+  cloneHtml(JUNK_SELECTORS).remove();
+  return collectImagesFromHtml(cloneHtml.html() || "", baseUrl);
 }
 
 function mergeMissingImages(html: string, urls: string[]): string {

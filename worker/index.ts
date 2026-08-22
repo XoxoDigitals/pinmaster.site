@@ -273,16 +273,32 @@ async function handleRewrite(job: JobRow) {
   }
 
   const categories = parseCategories(article.bloggerBlog?.categories);
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
+  } catch {
+    meta = {};
+  }
+  const extraImageUrls = [
+    typeof meta.featuredImage === "string" ? meta.featuredImage : "",
+    ...(Array.isArray(meta.images)
+      ? meta.images.filter((u: unknown): u is string => typeof u === "string")
+      : []),
+  ].filter(Boolean);
+
   const result = await rewriteArticle(article.userId, {
     title: article.originalTitle || titleFromSourceUrl(article.sourceUrl),
     content: article.originalContent,
     url: article.sourceUrl,
     categories,
+    extraImageUrls,
   });
 
   const html = mergeOriginalImages(
     article.originalContent,
-    result.faqHtml ? `${result.html}\n<section class="faq">${result.faqHtml}</section>` : result.html
+    result.faqHtml ? `${result.html}\n<section class="faq">${result.faqHtml}</section>` : result.html,
+    extraImageUrls,
+    article.sourceUrl
   );
 
   const bloggerCategory = resolveCategory(result.category, categories);
