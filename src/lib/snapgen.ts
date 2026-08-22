@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
+import { effectiveImageSystemPrompt } from "@/lib/image-prompts";
 
 export type SnapgenGenerateOptions = {
   prompt: string;
@@ -40,8 +41,7 @@ export async function generateSnapgenImage(
   const style = options.style || settings.imageStyle || "Photorealistic";
 
   const styledPrompt = [
-    settings.imageSystemPrompt ||
-      "Create a high-quality, realistic image with no text, logos, or watermarks.",
+    effectiveImageSystemPrompt(settings.imageSystemPrompt),
     `Style: ${style}.`,
     options.prompt,
   ].join(" ");

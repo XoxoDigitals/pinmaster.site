@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import { buildRewriteSystemPrompt } from "@/lib/rewrite-style";
-import { analyzeListicleContent, buildRewriteUserContent } from "@/lib/rewrite-listicle";
+import { analyzeListicleContent, buildRewriteUserContent, countNumberedListItems, ensureNumberedTitle, syncTitleAndH1 } from "@/lib/rewrite-listicle";
+import { effectiveImageSystemPrompt } from "@/lib/image-prompts";
 import { rewriteWithGoogleAiStudio } from "@/lib/google-ai";
 import { generateSnapgenImage, snapgenAspectForPin } from "@/lib/snapgen";
 import { finalizeRewrittenHtml, prepareContentForRewrite } from "@/lib/rewrite-html";
@@ -58,12 +59,24 @@ export async function rewriteArticle(
       ? await rewriteWithGoogleAiStudio(userId, payload, listicle)
       : await rewriteWithOpenRouter(userId, payload, settings, listicle);
 
+  let html = finalizeRewrittenHtml(input.content, prepared.blocks, result.html, {
+    extraSrcs: input.extraImageUrls,
+    baseUrl: input.url,
+  });
+
+  const itemCount = countNumberedListItems(html);
+  const numberedTitle = ensureNumberedTitle(result.title, { listicle, itemCount });
+  const numberedMetaTitle = ensureNumberedTitle(result.metaTitle || numberedTitle, {
+    listicle,
+    itemCount,
+  });
+  html = syncTitleAndH1(html, numberedTitle);
+
   return {
     ...result,
-    html: finalizeRewrittenHtml(input.content, prepared.blocks, result.html, {
-      extraSrcs: input.extraImageUrls,
-      baseUrl: input.url,
-    }),
+    title: numberedTitle,
+    metaTitle: numberedMetaTitle,
+    html,
   };
 }
 
@@ -176,8 +189,7 @@ async function generateWithOpenRouter(
     settings.imageModel || process.env.OPENROUTER_IMAGE_MODEL || "x-ai/grok-2-image";
 
   const styledPrompt = [
-    settings.imageSystemPrompt ||
-      "Create a high-quality, realistic image with no text, logos, or watermarks.",
+    effectiveImageSystemPrompt(settings.imageSystemPrompt),
     `Style: ${settings.imageStyle}.`,
     prompt,
   ].join(" ");
@@ -195,9 +207,7 @@ async function generateWithOpenRouter(
       messages: [
         {
           role: "system",
-          content:
-            settings.imageSystemPrompt ||
-            "You generate professional marketing images. No text overlays.",
+          content: effectiveImageSystemPrompt(settings.imageSystemPrompt),
         },
         { role: "user", content: styledPrompt },
       ],
@@ -244,11 +254,11 @@ export function buildImagePrompt(
 ) {
   const aspect = vertical
     ? "Vertical Pinterest pin composition 2:3"
-    : "Wide featured blog image 16:9";
+    : "Wide featured blog hero image 16:9";
   const typeNote = pinType
     ? ` Pin creative type: ${pinType}. Make this variation visually distinct for that type.`
     : variation > 1
       ? ` Variation ${variation}: different angle/composition.`
       : "";
-  return `${aspect} illustrating: ${title}. Context: ${excerpt.slice(0, 400)}.${typeNote}`;
+  return `${aspect}. Illustrate the topic with appetizing, scroll-stopping visuals. REQUIRED: render this exact title text prominently on the image in large bold readable typography: "${title}". Context: ${excerpt.slice(0, 400)}.${typeNote}`;
 }

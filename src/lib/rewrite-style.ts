@@ -44,7 +44,8 @@ Length: ${settings.articleLength || "similar"}. SEO level: ${settings.seoLevel |
 ${categoryRule}
 
 SEO structure (required):
-- Use one clear h1 at the top of "html" (main topic). Do not skip heading levels (no h1 → h4 jumps).
+- title and metaTitle MUST start with a number + space when the post is a list/count article (e.g. "21 Easy Christmas Appetizers", "10 Cake Recipes You Must Try"). For listicles, the number must match how many numbered items you keep in the body (within the target range).
+- Use one clear h1 at the top of "html" matching the numeric title. Do not skip heading levels (no h1 → h4 jumps).
 - Major sections: h2. Subsections: h3. Deeper detail only when needed: h4–h6.
 - Write descriptive, keyword-rich headings that match search intent (not generic "Introduction").
 - Short paragraphs (2–4 sentences), scannable lists, natural keyword placement — no stuffing.

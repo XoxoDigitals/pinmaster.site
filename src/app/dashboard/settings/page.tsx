@@ -75,7 +75,7 @@ const defaults: Settings = {
   seoLevel: "high",
   imageStyle: "photorealistic",
   imageSystemPrompt:
-    "Create a high-quality, realistic image with no text, logos, or watermarks. Focus on clear subject composition and professional lighting.",
+    "Create a high-quality, professional marketing image. Include bold, large, readable overlay text showing the exact title phrase provided in the user prompt (for example: 10 Cake Recipes You Must Try). Use high-contrast typography on a semi-transparent band or integrated hero layout. No logos or watermarks besides that title text. Photorealistic composition with professional lighting.",
   language: "en",
   toneOfVoice: "informative",
   dailyImageLimit: 50,

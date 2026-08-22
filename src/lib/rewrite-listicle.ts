@@ -65,3 +65,38 @@ export function buildRewriteUserContent(input: {
   parts.push("", "Original content:", input.content.slice(0, 24000));
   return parts.join("\n");
 }
+
+/** Leading number in title (e.g. "21 Best …"). */
+export function ensureNumberedTitle(
+  title: string,
+  opts?: { listicle?: ListicleRewriteHint | null; itemCount?: number }
+): string {
+  const cleaned = title.trim();
+  if (/^\d{1,2}\s+\S/.test(cleaned)) return cleaned;
+
+  let n = opts?.itemCount && opts.itemCount >= 5 ? opts.itemCount : 0;
+  if (!n && opts?.listicle) {
+    n = Math.round((opts.listicle.targetMin + opts.listicle.targetMax) / 2);
+  }
+  if (n >= 5) {
+    const withoutLeadingThe = cleaned.replace(/^the\s+/i, "");
+    return `${n} ${withoutLeadingThe}`;
+  }
+  return cleaned;
+}
+
+export function syncTitleAndH1(html: string, title: string): string {
+  if (!html?.trim()) return html;
+  const $ = cheerio.load(html, { xml: false }, false);
+  const safe = title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+  const h1 = $("h1").first();
+  if (h1.length) {
+    h1.text(title);
+  } else {
+    $.root().prepend(`<h1>${safe}</h1>\n`);
+  }
+  return ($.html() || html).trim();
+}

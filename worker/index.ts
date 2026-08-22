@@ -23,6 +23,7 @@ import {
 } from "../src/lib/pin-types";
 import { uploadImageFromUrl } from "../src/lib/r2";
 import { publishToBlogger } from "../src/lib/google";
+import { prepareBloggerHtml } from "../src/lib/blogger-html";
 import {
   createPinterestBoard,
   createPinterestPin,
@@ -533,6 +534,7 @@ async function handleBlogger(job: JobRow) {
   if (content.trim() && featuredSrc) {
     content = ensureFeaturedInHtml(content, featuredSrc, title, article.sourceUrl);
   }
+  content = prepareBloggerHtml(content);
   if (!content.trim()) {
     throw new Error("No article HTML to publish");
   }

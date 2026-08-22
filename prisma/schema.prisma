@@ -326,7 +326,7 @@ model AiSettings {
   articleLength        String  @default("similar")
   seoLevel             String  @default("high")
   imageStyle           String  @default("photorealistic")
-  imageSystemPrompt    String  @default("Create a high-quality, realistic image with no text, logos, or watermarks. Focus on clear subject composition and professional lighting.")
+  imageSystemPrompt    String  @default("Create a high-quality, professional marketing image. Include bold, large, readable overlay text showing the exact title phrase provided in the user prompt. High-contrast typography. No logos besides that title text.")
   language             String  @default("en")
   toneOfVoice          String  @default("informative")
   dailyImageLimit      Int     @default(50)

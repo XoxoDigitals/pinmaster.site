@@ -11,15 +11,15 @@ export type PinTypePreset = (typeof DEFAULT_PIN_TYPES)[number] | string;
 
 const TYPE_IMAGE_HINTS: Record<string, string> = {
   "Educational / Tip":
-    "Clean educational tip visual: one clear subject, soft instructional mood, space that implies a tip without any text overlay.",
+    "Clean educational tip visual: one clear subject, soft instructional mood; leave space for the title text overlay from the main prompt.",
   "Inspirational / Quote-style visual":
-    "Inspirational mood visual: atmospheric, calm, scroll-stopping composition with emotional warmth — no text, logos, or quote typography.",
+    "Inspirational mood visual: atmospheric, calm, scroll-stopping composition — the article title text from the main prompt is the hero overlay.",
   "How-to / Step":
-    "How-to / process visual: hands-on step feeling, practical scene, sequential craft energy without numbered labels or text.",
+    "How-to / process visual: hands-on step feeling, practical scene — complement the title text overlay from the main prompt.",
   "Product / Lifestyle":
-    "Product lifestyle scene: aspirational but grounded context, natural light, real-world setting — no packaging text or logos.",
+    "Product lifestyle scene: aspirational but grounded context, natural light — no extra logos; title text comes from the main prompt.",
   "Stat / List":
-    "Bold list/stat energy visual: strong graphic composition, clear focal point, organized visual hierarchy — no numbers or text overlays.",
+    "Bold list/stat energy visual: strong graphic composition, clear focal point — the numeric title from the main prompt is the on-image text.",
 };
 
 export function parsePinTypes(raw?: string | null): string[] {
@@ -54,6 +54,6 @@ export function pinTypeForIndex(types: string[], index: number): string {
 export function imageHintForPinType(pinType: string): string {
   return (
     TYPE_IMAGE_HINTS[pinType] ||
-    `Creative variation for pin type "${pinType}": distinct composition and mood, no text overlays.`
+    `Creative variation for pin type "${pinType}": distinct composition; title text overlay is provided in the main prompt.`
   );
 }
