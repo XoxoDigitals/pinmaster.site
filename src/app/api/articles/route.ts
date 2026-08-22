@@ -11,7 +11,7 @@ import {
 } from "@/lib/queue";
 import { parsePostTimes, scheduledForSlot, nextAssignedSlotUtc, formatGmtPlus5 } from "@/lib/schedule";
 import { isSameUtcDay } from "@/lib/limits";
-import { titleFromSourceUrl } from "@/lib/extract";
+import { titleFromSourceUrl, shouldRefreshArticleImages } from "@/lib/extract";
 
 function parseMeta(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
@@ -246,8 +246,9 @@ export async function POST(req: NextRequest) {
         where: { id: articleId },
         data: { errorMessage: null },
       });
-      // DISCOVERED / missing content → extract first (chains to rewrite).
-      if (!article.originalContent) {
+      const meta = parseMeta(article.originalMeta);
+      // Missing or sparse image extract → re-crawl first (chains to rewrite).
+      if (!article.originalContent || shouldRefreshArticleImages(article.originalContent, meta)) {
         await enqueueExtract(articleId, userId);
       } else {
         await enqueueRewrite(articleId, userId);

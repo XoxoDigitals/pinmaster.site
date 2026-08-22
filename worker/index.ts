@@ -11,7 +11,7 @@ import {
   parseTags,
   stringifyTags,
 } from "../src/lib/queue";
-import { parseSitemapEntries, extractArticleContent, titleFromSourceUrl } from "../src/lib/extract";
+import { parseSitemapEntries, extractArticleContent, titleFromSourceUrl, shouldRefreshArticleImages, countHtmlImages } from "../src/lib/extract";
 import { mergeOriginalImages } from "../src/lib/rewrite-html";
 import { hashUrl } from "../src/lib/crypto";
 import { rewriteArticle, generateImage, buildImagePrompt } from "../src/lib/openrouter";
@@ -235,12 +235,17 @@ async function handleExtract(job: JobRow) {
     metaDescription: extracted.metaDescription,
     headings: extracted.headings,
     images: extracted.images,
+    imageCount: extracted.imageCount,
     tags: extracted.tags,
     featuredImage: extracted.featuredImage,
     sitemapImages: extraImages,
   };
   if (forcePublishNow) nextMeta.forcePublishNow = true;
   else delete nextMeta.forcePublishNow;
+
+  console.log(
+    `[extract-job] article=${article.id} imageCount=${extracted.imageCount} urls=${extracted.images.length}`
+  );
 
   await prisma.article.update({
     where: { id: article.id },
@@ -263,22 +268,62 @@ async function handleExtract(job: JobRow) {
 
 async function handleRewrite(job: JobRow) {
   const { articleId } = payloadOf(job) as { articleId: string };
-  const article = await prisma.article.findUniqueOrThrow({
+  let article = await prisma.article.findUniqueOrThrow({
     where: { id: articleId },
     include: { bloggerBlog: true },
   });
 
-  if (!article.originalContent) {
-    throw new Error("Missing original content");
-  }
-
-  const categories = parseCategories(article.bloggerBlog?.categories);
   let meta: Record<string, unknown> = {};
   try {
     meta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
   } catch {
     meta = {};
   }
+
+  // Re-fetch source when prior extract was sparse (common: only og:image kept).
+  if (shouldRefreshArticleImages(article.originalContent, meta)) {
+    const extraImages = Array.isArray(meta.sitemapImages)
+      ? meta.sitemapImages.filter((u: unknown): u is string => typeof u === "string")
+      : [];
+    console.log(
+      `[rewrite-job] refreshing extract for ${article.id} (contentImgs=${countHtmlImages(
+        article.originalContent
+      )}, metaImgs=${Array.isArray(meta.images) ? meta.images.length : 0})`
+    );
+    const extracted = await extractArticleContent(article.sourceUrl, { extraImages });
+    meta = {
+      ...meta,
+      metaDescription: extracted.metaDescription,
+      headings: extracted.headings,
+      images: extracted.images,
+      imageCount: extracted.imageCount,
+      tags: extracted.tags,
+      featuredImage: extracted.featuredImage,
+      sitemapImages: extraImages,
+    };
+    await prisma.article.update({
+      where: { id: article.id },
+      data: {
+        originalTitle: extracted.title,
+        originalContent: extracted.content,
+        metaDescription: extracted.metaDescription || undefined,
+        originalMeta: JSON.stringify(meta),
+        tags: stringifyTags(extracted.tags),
+        status: "REWRITING",
+        errorMessage: null,
+      },
+    });
+    article = await prisma.article.findUniqueOrThrow({
+      where: { id: articleId },
+      include: { bloggerBlog: true },
+    });
+  }
+
+  if (!article.originalContent) {
+    throw new Error("Missing original content");
+  }
+
+  const categories = parseCategories(article.bloggerBlog?.categories);
   const extraImageUrls = [
     typeof meta.featuredImage === "string" ? meta.featuredImage : "",
     ...(Array.isArray(meta.images)
@@ -299,6 +344,12 @@ async function handleRewrite(job: JobRow) {
     result.faqHtml ? `${result.html}\n<section class="faq">${result.faqHtml}</section>` : result.html,
     extraImageUrls,
     article.sourceUrl
+  );
+
+  console.log(
+    `[rewrite-job] article=${article.id} originalImgs=${countHtmlImages(
+      article.originalContent
+    )} rewrittenImgs=${countHtmlImages(html)}`
   );
 
   const bloggerCategory = resolveCategory(result.category, categories);

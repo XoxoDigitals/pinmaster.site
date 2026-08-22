@@ -62,15 +62,35 @@ function normalizeSrc(src: string, baseUrl?: string): string {
 
 function srcFromSrcset(srcset: string | undefined, baseUrl?: string): string {
   if (!srcset?.trim()) return "";
-  const first = srcset.split(",")[0]?.trim().split(/\s+/)[0] || "";
-  return normalizeSrc(first, baseUrl);
+  let best = "";
+  let bestScore = -1;
+  for (const chunk of srcset.split(",")) {
+    const parts = chunk.trim().split(/\s+/);
+    const url = normalizeSrc(parts[0] || "", baseUrl);
+    if (!url || url.startsWith("data:")) continue;
+    const desc = parts[1] || "";
+    let score = 1;
+    const w = /^(\d+)w$/i.exec(desc);
+    const x = /^(\d+(?:\.\d+)?)x$/i.exec(desc);
+    if (w) score = parseInt(w[1], 10);
+    else if (x) score = Math.round(parseFloat(x[1]) * 10000);
+    if (score >= bestScore) {
+      bestScore = score;
+      best = url;
+    }
+  }
+  return best;
+}
+
+function isPlaceholderNodeSrc(src: string): boolean {
+  if (!src || src.startsWith("data:") || src.startsWith("blob:")) return true;
+  return /\/(spacer|pixel|blank|placeholder|1x1|grey|gray|transparent)\b/i.test(src);
 }
 
 function pickNodeSrc($: cheerio.CheerioAPI, el: Element, baseUrl?: string): string {
   const $el = $(el);
   const tag = (el.tagName || "").toLowerCase();
-  const candidates = [
-    $el.attr("src"),
+  const lazy = [
     $el.attr("data-src"),
     $el.attr("data-lazy-src"),
     $el.attr("data-original"),
@@ -80,27 +100,32 @@ function pickNodeSrc($: cheerio.CheerioAPI, el: Element, baseUrl?: string): stri
     $el.attr("data-background-image"),
     tag === "a" ? $el.attr("href") : undefined,
   ];
-  for (const c of candidates) {
-    const src = normalizeSrc(c || "", baseUrl);
-    if (src && !src.startsWith("data:")) return src;
-  }
-  return (
-    srcFromSrcset($el.attr("srcset") || $el.attr("data-srcset") || $el.attr("data-lazy-srcset"), baseUrl) ||
-    ""
+  const fromSrcset = srcFromSrcset(
+    $el.attr("data-lazy-srcset") || $el.attr("data-srcset") || $el.attr("srcset"),
+    baseUrl
   );
+  const src = $el.attr("src");
+  const ordered = [...lazy, fromSrcset, !isPlaceholderNodeSrc(src || "") ? src : undefined];
+  for (const c of ordered) {
+    const normalized = normalizeSrc(c || "", baseUrl);
+    if (normalized && !isPlaceholderNodeSrc(normalized)) return normalized;
+  }
+  return fromSrcset || "";
 }
 
-function figureHtml(src: string, alt = ""): string {
+function figureHtml(src: string, alt = "", featured = false): string {
   const abs = src.startsWith("http") ? src : absolutizeUrl(src);
   if (!abs.startsWith("http")) return "";
   const safeAlt = escapeAttr(alt);
-  return `<figure><img src="${escapeAttr(abs)}" alt="${safeAlt}" loading="lazy" /></figure>`;
+  const cls = featured ? ' class="featured"' : "";
+  return `<figure${cls}><img src="${escapeAttr(abs)}" alt="${safeAlt}" loading="lazy" /></figure>`;
 }
 
-function blockFromSrc(src: string, baseUrl?: string, html?: string): ImageBlock | null {
+function blockFromSrc(src: string, baseUrl?: string, html?: string, featured = false): ImageBlock | null {
   const abs = normalizeSrc(src, baseUrl);
   if (!abs || !abs.startsWith("http") || abs.startsWith("data:")) return null;
-  return { src: abs, html: html && /<img\b/i.test(html) ? html : figureHtml(abs) };
+  // Always emit a clean figure for restore/inject so After never depends on brittle original markup.
+  return { src: abs, html: figureHtml(abs, "", featured) };
 }
 
 function collectBlocksFromDom(html: string, baseUrl?: string): ImageBlock[] {
@@ -315,15 +340,39 @@ function distributeBlocks(rewritten: string, missing: ImageBlock[]): string {
   if (!missing.length) return rewritten;
   const $ = loadFragment(rewritten);
   const anchors = $("h2, h3, p").toArray() as Element[];
-  if (anchors.length <= 1) {
-    return `${rewritten}\n${missing.map((b) => b.html).join("\n")}`;
+
+  if (!anchors.length) {
+    const tail = missing.map((b) => b.html).join("\n");
+    return `${rewritten}\n${tail}`.trim();
   }
-  const step = Math.max(1, Math.floor(anchors.length / (missing.length + 1)));
-  missing.forEach((block, i) => {
-    const idx = Math.min(anchors.length - 1, (i + 1) * step);
-    insertAfterNode($, anchors[idx], block.html);
-  });
-  return ($.html() || rewritten).trim();
+
+  // First missing image goes after the first paragraph (or first anchor).
+  const firstAnchor = $("p").get(0) || anchors[0];
+  insertAfterNode($, firstAnchor as Element, missing[0].html);
+
+  const rest = missing.slice(1);
+  if (rest.length) {
+    const laterAnchors = $("h2, h3, p").toArray() as Element[];
+    if (laterAnchors.length <= 1) {
+      const root = $.root();
+      root.append(rest.map((b) => b.html).join("\n"));
+    } else {
+      const step = Math.max(1, Math.floor(laterAnchors.length / (rest.length + 1)));
+      rest.forEach((block, i) => {
+        const idx = Math.min(laterAnchors.length - 1, (i + 1) * step);
+        insertAfterNode($, laterAnchors[idx], block.html);
+      });
+    }
+  }
+
+  // Append any blocks that somehow didn't land as real <img> tags.
+  let out = ($.html() || rewritten).trim();
+  const present = collectPresentSrcs(out);
+  const stillMissing = missing.filter((b) => !present.has(b.src));
+  if (stillMissing.length) {
+    out = `${out}\n${stillMissing.map((b) => b.html).join("\n")}`;
+  }
+  return out.trim();
 }
 
 /**
@@ -336,7 +385,10 @@ export function mergeOriginalImages(
   extraSrcs: string[] = [],
   baseUrl?: string
 ): string {
-  const originalBlocks = collectImageBlocks(originalHtml, extraSrcs, baseUrl);
+  const originalBlocks = collectImageBlocks(originalHtml, extraSrcs, baseUrl).map((block, i) => ({
+    ...block,
+    html: figureHtml(block.src, "", i === 0),
+  }));
   const rewritten = markdownImagesToHtml(unescapeIfNeeded(rewrittenHtml || ""), baseUrl).trim();
 
   if (!originalBlocks.length) return rewritten;
@@ -353,7 +405,7 @@ export function mergeOriginalImages(
   let body = rewritten;
   let rest = missing;
   if (featured && missing.some((b) => b.src === featured.src)) {
-    body = `${featured.html}\n${body}`;
+    body = `${figureHtml(featured.src, "", true)}\n${body}`;
     rest = missing.filter((b) => b.src !== featured.src);
   }
 
