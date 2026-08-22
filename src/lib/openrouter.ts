@@ -3,6 +3,7 @@ import { decrypt } from "@/lib/crypto";
 import { buildRewriteSystemPrompt } from "@/lib/rewrite-style";
 import { rewriteWithGoogleAiStudio } from "@/lib/google-ai";
 import { generateSnapgenImage, snapgenAspectForPin } from "@/lib/snapgen";
+import { finalizeRewrittenHtml, prepareContentForRewrite } from "@/lib/rewrite-html";
 
 export type RewriteResult = {
   title: string;
@@ -46,11 +47,18 @@ export async function rewriteArticle(
     create: { userId },
   });
 
-  if (settings.contentProvider === "google_ai_studio") {
-    return rewriteWithGoogleAiStudio(userId, input);
-  }
+  const prepared = prepareContentForRewrite(input.content);
+  const payload = { ...input, content: prepared.markedHtml };
 
-  return rewriteWithOpenRouter(userId, input, settings);
+  const result =
+    settings.contentProvider === "google_ai_studio"
+      ? await rewriteWithGoogleAiStudio(userId, payload)
+      : await rewriteWithOpenRouter(userId, payload, settings);
+
+  return {
+    ...result,
+    html: finalizeRewrittenHtml(input.content, prepared.blocks, result.html),
+  };
 }
 
 async function rewriteWithOpenRouter(

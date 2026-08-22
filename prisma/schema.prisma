@@ -214,6 +214,8 @@ model Article {
   pinUrl           String?
   errorMessage     String?
   publishedAt      DateTime?
+  /// Next rewrite/publish slot (UTC). Display in GMT+5.
+  scheduledAt      DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 

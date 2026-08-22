@@ -12,6 +12,7 @@ export {
   preferredHourForDay,
   resizePostTimes,
   scheduledForSlot,
+  nextAssignedSlotUtc,
   serializePostingDays,
   serializePostingHoursByDay,
   serializePostTimes,

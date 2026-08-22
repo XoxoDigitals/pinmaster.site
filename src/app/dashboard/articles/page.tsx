@@ -32,6 +32,8 @@ type Article = {
   pinUrl: string | null;
   errorMessage: string | null;
   updatedAt: string;
+  scheduledAt: string | null;
+  scheduledAtGmt5: string | null;
   bloggerCategory: string | null;
   bloggerBlog: { name: string } | null;
 };
@@ -166,7 +168,7 @@ function ArticlesPageInner() {
                       textDecoration: "none",
                     }}
                   >
-                    {article.rewrittenTitle || article.originalTitle || "Untitled"}
+                    {article.rewrittenTitle || article.originalTitle || article.sourceUrl}
                   </Link>
                   <p
                     style={{
@@ -179,7 +181,11 @@ function ArticlesPageInner() {
                     {article.sourceUrl}
                   </p>
                   <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--fg-muted)" }}>
-                    {new Date(article.updatedAt).toLocaleString()}
+                    {article.scheduledAtGmt5
+                      ? `Scheduled rewrite/publish: ${article.scheduledAtGmt5}`
+                      : article.scheduledAt
+                        ? `Scheduled rewrite/publish: ${new Date(article.scheduledAt).toLocaleString("en-US", { timeZone: "Asia/Karachi" })} GMT+5`
+                        : "Scheduled rewrite/publish: not assigned yet"}
                     {article.bloggerCategory ? ` · ${article.bloggerCategory}` : ""}
                   </p>
                   {article.errorMessage && (

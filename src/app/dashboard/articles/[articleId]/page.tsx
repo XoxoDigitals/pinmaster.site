@@ -34,6 +34,8 @@ type ArticleDetail = {
   keywordBoardName: string;
   paired: boolean;
   pinsPerArticle: number;
+  scheduledAt: string | null;
+  scheduledAtGmt5: string | null;
   bloggerBlog: {
     id: string;
     name: string;
@@ -101,7 +103,7 @@ export default function ArticleDetailPage() {
         action === "rewrite"
           ? "Rewrite queued"
           : action === "publish_now"
-            ? "Publish started (remaining pipeline)"
+            ? "Publish started — posting to Blogger"
             : action === "schedule"
               ? "Scheduled using your article/pin time slots"
               : "Done"
@@ -161,7 +163,7 @@ export default function ArticleDetailPage() {
   return (
     <div>
       <PageHeader
-        title={article.rewrittenTitle || article.originalTitle || "Untitled"}
+        title={article.rewrittenTitle || article.originalTitle || article.sourceUrl}
         description={`${article.bloggerBlog?.name || "Unassigned"} · ${article.status}`}
         action={
           <Link href={blogHref} style={btnGhost}>
@@ -199,6 +201,15 @@ export default function ArticleDetailPage() {
                 Blogger category: <strong>{article.bloggerCategory}</strong>
               </p>
             )}
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-soft)" }}>
+              Scheduled rewrite/publish:{" "}
+              <strong>
+                {article.scheduledAtGmt5 ||
+                  (article.scheduledAt
+                    ? `${new Date(article.scheduledAt).toLocaleString("en-US", { timeZone: "Asia/Karachi" })} GMT+5`
+                    : "not assigned yet")}
+              </strong>
+            </p>
             {article.errorMessage && (
               <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--danger)" }}>
                 {article.errorMessage}
@@ -222,9 +233,8 @@ export default function ArticleDetailPage() {
           <button
             type="button"
             style={btnPrimary}
-            disabled={Boolean(busy) || !article.paired}
+            disabled={Boolean(busy)}
             onClick={() => runAction("publish_now")}
-            title={article.paired ? undefined : "Pair blog with Pinterest first"}
           >
             {busy === "publish_now" ? "Starting…" : "Publish now"}
           </button>
@@ -249,7 +259,8 @@ export default function ArticleDetailPage() {
         </div>
         {!article.paired && (
           <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--warn)" }}>
-            Publish/Schedule require a Pinterest pair on the Blogger page.
+            Schedule (pins) requires a Pinterest pair on the Blogger page. Publish now still posts to
+            Blogger without pins.
           </p>
         )}
       </Panel>
@@ -432,7 +443,7 @@ export default function ArticleDetailPage() {
             <button
               type="button"
               style={btnPrimary}
-              disabled={Boolean(busy) || !article.paired}
+              disabled={Boolean(busy)}
               onClick={() => runAction("publish_now")}
             >
               Publish now

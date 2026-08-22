@@ -16,6 +16,7 @@ export type ScheduleSettingsLike = {
   postingHoursByDay?: string | null;
   scheduleWindowStart?: number | null;
   scheduleWindowEnd?: number | null;
+  articlePostTimes?: string | null;
 };
 
 const DEFAULT_DAYS = WEEKDAYS.map((d) => d.key);
@@ -209,11 +210,52 @@ export function resizePostTimes(times: string[], count: number): string[] {
 }
 
 /**
- * Build a Date for today (server local) at HH:mm.
+ * Build a Date for today (GMT+5 / Asia/Karachi) at HH:mm, stored as UTC.
  * Returns null when times are empty (caller should publish immediately).
- * If the slot time already passed today, returns `now` so the job can run ASAP.
+ * If the slot time already passed, returns `now` so the job can run ASAP.
  */
 export function scheduledForSlot(
+  times: string[],
+  slotIndex: number,
+  now: Date = new Date()
+): Date | null {
+  const exact = exactSlotUtc(times, slotIndex, now);
+  if (!exact) return null;
+  if (exact.getTime() <= now.getTime()) return now;
+  return exact;
+}
+
+/** Civil date/time parts in GMT+5 (Pakistan, no DST). */
+export function gmtPlus5Parts(date: Date): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: number;
+} {
+  const shifted = new Date(date.getTime() + 5 * 60 * 60 * 1000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    weekday: shifted.getUTCDay(),
+  };
+}
+
+export function utcFromGmtPlus5(
+  year: number,
+  monthIndex: number,
+  day: number,
+  hour: number,
+  minute: number
+): Date {
+  return new Date(Date.UTC(year, monthIndex, day, hour - 5, minute, 0, 0));
+}
+
+export function exactSlotUtc(
   times: string[],
   slotIndex: number,
   now: Date = new Date()
@@ -223,8 +265,83 @@ export function scheduledForSlot(
   const hhmm = normalizeHhMm(times[idx]);
   if (!hhmm) return null;
   const [h, m] = hhmm.split(":").map(Number);
-  const target = new Date(now);
-  target.setHours(h, m, 0, 0);
-  if (target.getTime() <= now.getTime()) return now;
-  return target;
+  const p = gmtPlus5Parts(now);
+  return utcFromGmtPlus5(p.year, p.month, p.day, h, m);
+}
+
+export const DISPLAY_TZ = "Asia/Karachi";
+
+export function formatGmtPlus5(date: Date | string | null | undefined): string {
+  if (!date) return "";
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (Number.isNaN(d.getTime())) return "";
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    timeZone: DISPLAY_TZ,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(d);
+  return `${formatted} GMT+5`;
+}
+
+function karachiWeekday(year: number, monthIndex: number, day: number): number {
+  return utcFromGmtPlus5(year, monthIndex, day, 12, 0).getUTCDay();
+}
+
+function addCalendarDays(
+  year: number,
+  monthIndex: number,
+  day: number,
+  add: number
+): { year: number; month: number; day: number } {
+  const d = new Date(Date.UTC(year, monthIndex, day + add));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth(), day: d.getUTCDate() };
+}
+
+/**
+ * Next rewrite/publish instant for the `queueIndex`-th waiting article (0-based),
+ * using posting days + article HH:mm slots interpreted in GMT+5. Stored as UTC.
+ */
+export function nextAssignedSlotUtc(
+  settings: ScheduleSettingsLike,
+  queueIndex: number,
+  now: Date = new Date(),
+  dailyLimit = 5
+): Date {
+  const times = parsePostTimes(settings.articlePostTimes);
+  const hour = settings.scheduleHour ?? 9;
+  const slotTimes =
+    times.length > 0
+      ? times
+      : [`${String(Math.max(0, Math.min(23, hour))).padStart(2, "0")}:00`];
+  const perDay = Math.max(1, Math.min(slotTimes.length, Math.max(1, dailyLimit)));
+  const days = parsePostingDays(settings.postingDays);
+  const p = gmtPlus5Parts(now);
+  let remaining = Math.max(0, Math.floor(queueIndex));
+  let cursor = { year: p.year, month: p.month, day: p.day };
+
+  for (let safety = 0; safety < 400; safety++) {
+    const jsDay = karachiWeekday(cursor.year, cursor.month, cursor.day);
+    const key = WEEKDAYS.find((d) => d.jsDay === jsDay)?.key ?? "mon";
+    if (days.includes(key)) {
+      for (let i = 0; i < perDay; i++) {
+        const hhmm = normalizeHhMm(slotTimes[i] || slotTimes[0]);
+        if (!hhmm) continue;
+        const [h, m] = hhmm.split(":").map(Number);
+        const at = utcFromGmtPlus5(cursor.year, cursor.month, cursor.day, h, m);
+        const isToday = cursor.year === p.year && cursor.month === p.month && cursor.day === p.day;
+        if (isToday && at.getTime() <= now.getTime()) continue;
+        if (remaining === 0) return at;
+        remaining -= 1;
+      }
+    }
+    cursor = addCalendarDays(cursor.year, cursor.month, cursor.day, 1);
+  }
+
+  const [h, m] = (normalizeHhMm(slotTimes[0]) || "09:00").split(":").map(Number);
+  return utcFromGmtPlus5(p.year, p.month, p.day + 1, h, m);
 }

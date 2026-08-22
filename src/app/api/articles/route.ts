@@ -9,8 +9,9 @@ import {
   enqueuePinterest,
   QUEUE_NAMES,
 } from "@/lib/queue";
-import { parsePostTimes, scheduledForSlot } from "@/lib/schedule";
+import { parsePostTimes, scheduledForSlot, nextAssignedSlotUtc, formatGmtPlus5 } from "@/lib/schedule";
 import { isSameUtcDay } from "@/lib/limits";
+import { titleFromSourceUrl } from "@/lib/extract";
 
 function parseMeta(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
@@ -51,7 +52,12 @@ async function cancelQueuedPublishJobs(articleId: string) {
       articleId,
       status: "QUEUED",
       queueName: {
-        in: [QUEUE_NAMES.PUBLISH_BLOGGER, QUEUE_NAMES.PUBLISH_PINTEREST],
+        in: [
+          QUEUE_NAMES.PUBLISH_BLOGGER,
+          QUEUE_NAMES.PUBLISH_PINTEREST,
+          QUEUE_NAMES.GENERATE_IMAGES,
+          QUEUE_NAMES.REWRITE_AI,
+        ],
       },
     },
     data: {
@@ -62,7 +68,7 @@ async function cancelQueuedPublishJobs(articleId: string) {
   });
 }
 
-async function requireBlogPairing(articleId: string, userId: string) {
+async function requireBlogAssigned(articleId: string, userId: string) {
   const article = await prisma.article.findFirst({
     where: { id: articleId, userId },
     include: {
@@ -84,14 +90,20 @@ async function requireBlogPairing(articleId: string, userId: string) {
   if (article.bloggerBlog.googleAccount.userId !== userId) {
     return { error: "Not found" as const, status: 404 as const };
   }
-  if (!article.bloggerBlog.pinterestMap?.pinterestAccountId) {
+  return { article };
+}
+
+async function requireBlogPairing(articleId: string, userId: string) {
+  const assigned = await requireBlogAssigned(articleId, userId);
+  if ("error" in assigned && assigned.error) return assigned;
+  if (!assigned.article.bloggerBlog?.pinterestMap?.pinterestAccountId) {
     return {
       error:
-        "Pair this blog with a Pinterest account on the Blogger page before publishing." as const,
+        "Pair this blog with a Pinterest account on the Blogger page before scheduling pins." as const,
       status: 400 as const,
     };
   }
-  return { article };
+  return assigned;
 }
 
 export async function GET(req: NextRequest) {
@@ -120,18 +132,80 @@ export async function GET(req: NextRequest) {
           id: true,
           name: true,
           url: true,
+          dailyLimit: true,
           googleAccountId: true,
           googleAccount: { select: { id: true, email: true } },
         },
       },
       sitemapSource: { select: { id: true, url: true } },
+      jobRuns: {
+        where: { status: { in: ["QUEUED", "ACTIVE"] }, scheduledFor: { not: null } },
+        orderBy: { scheduledFor: "asc" },
+        take: 1,
+        select: { scheduledFor: true },
+      },
       _count: { select: { pins: true } },
     },
     orderBy: { createdAt: "desc" },
     take,
   });
 
-  return NextResponse.json(articles);
+  const settings = await prisma.aiSettings.findUnique({
+    where: { userId: session.user.id },
+  });
+
+  const discoveredByBlog = new Map<string, typeof articles>();
+  for (const article of articles) {
+    if (article.status !== "DISCOVERED" || !article.bloggerBlogId) continue;
+    const list = discoveredByBlog.get(article.bloggerBlogId) || [];
+    list.push(article);
+    discoveredByBlog.set(article.bloggerBlogId, list);
+  }
+  for (const [, list] of discoveredByBlog) {
+    list.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+  const discoveredIndex = new Map<string, number>();
+  for (const [, list] of discoveredByBlog) {
+    list.forEach((article, index) => discoveredIndex.set(article.id, index));
+  }
+
+  const now = new Date();
+  const payload = [];
+  for (const article of articles) {
+    let originalTitle = article.originalTitle?.trim() || "";
+    if (!originalTitle) {
+      originalTitle = titleFromSourceUrl(article.sourceUrl);
+      await prisma.article.update({
+        where: { id: article.id },
+        data: { originalTitle },
+      });
+    }
+
+    let scheduledAt =
+      article.scheduledAt || article.jobRuns[0]?.scheduledFor || null;
+    if (!scheduledAt && article.status === "DISCOVERED" && article.bloggerBlogId) {
+      const idx = discoveredIndex.get(article.id) ?? 0;
+      scheduledAt = nextAssignedSlotUtc(
+        settings || {},
+        idx,
+        now,
+        article.bloggerBlog?.dailyLimit || 5
+      );
+      await prisma.article.update({
+        where: { id: article.id },
+        data: { scheduledAt },
+      });
+    }
+
+    payload.push({
+      ...article,
+      originalTitle,
+      scheduledAt,
+      scheduledAtGmt5: formatGmtPlus5(scheduledAt),
+    });
+  }
+
+  return NextResponse.json(payload);
 }
 
 export async function POST(req: NextRequest) {
@@ -173,7 +247,7 @@ export async function POST(req: NextRequest) {
         data: { errorMessage: null },
       });
       // DISCOVERED / missing content → extract first (chains to rewrite).
-      if (!article.originalContent || !article.originalTitle) {
+      if (!article.originalContent) {
         await enqueueExtract(articleId, userId);
       } else {
         await enqueueRewrite(articleId, userId);
@@ -214,30 +288,24 @@ export async function POST(req: NextRequest) {
       break;
 
     case "publish_now": {
-      const paired = await requireBlogPairing(articleId, userId);
-      if ("error" in paired && paired.error) {
-        return NextResponse.json({ error: paired.error }, { status: paired.status });
+      const assigned = await requireBlogAssigned(articleId, userId);
+      if ("error" in assigned && assigned.error) {
+        return NextResponse.json({ error: assigned.error }, { status: assigned.status });
       }
 
-      if (article.status === "COMPLETED") {
+      if (article.status === "COMPLETED" && article.bloggerPostUrl) {
         return NextResponse.json({ ok: true, message: "Already completed" });
       }
 
       await cancelQueuedPublishJobs(articleId);
       await setArticleMetaFlags(articleId, article.originalMeta, { forcePublishNow: true });
 
-      const rewritten = Boolean(article.rewrittenHtml);
-      const imaged = hasPinImages(article);
       const bloggerDone = Boolean(article.bloggerPostUrl || article.bloggerPostId);
 
-      if (bloggerDone || article.status === "PINNING") {
+      if (bloggerDone) {
         await enqueuePinterest(articleId, userId, null, { immediate: true });
-      } else if (rewritten && imaged) {
+      } else if (article.originalContent || article.rewrittenHtml) {
         await enqueueBlogger(articleId, userId, null, { immediate: true });
-      } else if (rewritten) {
-        await enqueueImages(articleId, userId);
-      } else if (article.originalContent) {
-        await enqueueRewrite(articleId, userId);
       } else {
         await enqueueExtract(articleId, userId);
       }
@@ -267,6 +335,12 @@ export async function POST(req: NextRequest) {
       const blog = full.bloggerBlog!;
       const slotIndex = isSameUtcDay(blog.publishedDay) ? blog.publishedToday : 0;
       const scheduledFor = scheduledForSlot(articleTimes, slotIndex);
+      if (scheduledFor) {
+        await prisma.article.update({
+          where: { id: articleId },
+          data: { scheduledAt: scheduledFor },
+        });
+      }
 
       const rewritten = Boolean(article.rewrittenHtml);
       const imaged = hasPinImages(article);

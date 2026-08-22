@@ -11,7 +11,8 @@ import {
   parseTags,
   stringifyTags,
 } from "../src/lib/queue";
-import { parseSitemapUrls, extractArticleContent } from "../src/lib/extract";
+import { parseSitemapEntries, extractArticleContent, titleFromSourceUrl } from "../src/lib/extract";
+import { mergeOriginalImages } from "../src/lib/rewrite-html";
 import { hashUrl } from "../src/lib/crypto";
 import { rewriteArticle, generateImage, buildImagePrompt } from "../src/lib/openrouter";
 import { generatePinCopy } from "../src/lib/pin-copy";
@@ -37,6 +38,7 @@ import {
   canRunScheduledWork,
   parsePostTimes,
   scheduledForSlot,
+  nextAssignedSlotUtc,
   countExtractsStartedToday,
   dueArticleSlotsToday,
 } from "../src/lib/limits";
@@ -113,10 +115,24 @@ async function failJob(job: JobRow, error: unknown) {
   const articleId =
     job.articleId || (payloadOf(job).articleId as string | undefined);
   if (!retry && articleId) {
-    await prisma.article.update({
+    const art = await prisma.article.findUnique({
       where: { id: articleId },
-      data: { status: "FAILED", errorMessage: message },
+      select: { bloggerPostUrl: true, bloggerPostId: true },
     });
+    if (art?.bloggerPostUrl || art?.bloggerPostId) {
+      await prisma.article.update({
+        where: { id: articleId },
+        data: {
+          status: "COMPLETED",
+          errorMessage: `Pins skipped: ${message}`,
+        },
+      });
+    } else {
+      await prisma.article.update({
+        where: { id: articleId },
+        data: { status: "FAILED", errorMessage: message },
+      });
+    }
   }
 }
 
@@ -127,21 +143,47 @@ async function handleCrawl(job: JobRow) {
     include: { blogLinks: true },
   });
 
-  const urls = await parseSitemapUrls(source.url);
+  const entries = await parseSitemapEntries(source.url);
   let urlsNew = 0;
   const defaultBlogId = source.blogLinks[0]?.bloggerBlogId;
+  const settings = await prisma.aiSettings.findUnique({
+    where: { userId: source.userId },
+  });
+  const blog = defaultBlogId
+    ? await prisma.bloggerBlog.findUnique({ where: { id: defaultBlogId } })
+    : null;
+  const discoveredCount = defaultBlogId
+    ? await prisma.article.count({
+        where: { bloggerBlogId: defaultBlogId, status: "DISCOVERED" },
+      })
+    : 0;
+  const now = new Date();
 
-  for (const url of urls) {
-    const sourceUrlHash = hashUrl(url);
+  for (const entry of entries) {
+    const sourceUrlHash = hashUrl(entry.loc);
+    const title = (entry.title || "").trim() || titleFromSourceUrl(entry.loc);
+    const scheduledAt = defaultBlogId
+      ? nextAssignedSlotUtc(
+          settings || {},
+          discoveredCount + urlsNew,
+          now,
+          blog?.dailyLimit || 5
+        )
+      : null;
     try {
       await prisma.article.create({
         data: {
           userId: source.userId,
           sitemapSourceId: source.id,
           bloggerBlogId: defaultBlogId,
-          sourceUrl: url,
+          sourceUrl: entry.loc,
           sourceUrlHash,
           status: "DISCOVERED",
+          originalTitle: title,
+          scheduledAt,
+          originalMeta: entry.images.length
+            ? JSON.stringify({ sitemapImages: entry.images })
+            : undefined,
         },
       });
       urlsNew += 1;
@@ -154,7 +196,7 @@ async function handleCrawl(job: JobRow) {
   await prisma.crawlHistory.create({
     data: {
       sitemapSourceId: source.id,
-      urlsFound: urls.length,
+      urlsFound: entries.length,
       urlsNew,
       status: "success",
     },
@@ -175,7 +217,30 @@ async function handleExtract(job: JobRow) {
     data: { status: "EXTRACTING", errorMessage: null },
   });
 
-  const extracted = await extractArticleContent(article.sourceUrl);
+  let priorMeta: Record<string, unknown> = {};
+  try {
+    priorMeta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
+  } catch {
+    priorMeta = {};
+  }
+  const extraImages = Array.isArray(priorMeta.sitemapImages)
+    ? priorMeta.sitemapImages.filter((u: unknown): u is string => typeof u === "string")
+    : [];
+  const forcePublishNow = Boolean(priorMeta.forcePublishNow);
+
+  const extracted = await extractArticleContent(article.sourceUrl, { extraImages });
+
+  const nextMeta: Record<string, unknown> = {
+    ...priorMeta,
+    metaDescription: extracted.metaDescription,
+    headings: extracted.headings,
+    images: extracted.images,
+    tags: extracted.tags,
+    featuredImage: extracted.featuredImage,
+    sitemapImages: extraImages,
+  };
+  if (forcePublishNow) nextMeta.forcePublishNow = true;
+  else delete nextMeta.forcePublishNow;
 
   await prisma.article.update({
     where: { id: article.id },
@@ -183,19 +248,17 @@ async function handleExtract(job: JobRow) {
       originalTitle: extracted.title,
       originalContent: extracted.content,
       metaDescription: extracted.metaDescription || undefined,
-      originalMeta: JSON.stringify({
-        metaDescription: extracted.metaDescription,
-        headings: extracted.headings,
-        images: extracted.images,
-        tags: extracted.tags,
-        featuredImage: extracted.featuredImage,
-      }),
+      originalMeta: JSON.stringify(nextMeta),
       tags: stringifyTags(extracted.tags),
-      status: "REWRITING",
+      status: forcePublishNow ? "PUBLISHING" : "REWRITING",
     },
   });
 
-  await enqueueRewrite(article.id, article.userId);
+  if (forcePublishNow) {
+    await enqueueBlogger(article.id, article.userId, null, { immediate: true });
+  } else {
+    await enqueueRewrite(article.id, article.userId);
+  }
 }
 
 async function handleRewrite(job: JobRow) {
@@ -205,21 +268,22 @@ async function handleRewrite(job: JobRow) {
     include: { bloggerBlog: true },
   });
 
-  if (!article.originalTitle || !article.originalContent) {
+  if (!article.originalContent) {
     throw new Error("Missing original content");
   }
 
   const categories = parseCategories(article.bloggerBlog?.categories);
   const result = await rewriteArticle(article.userId, {
-    title: article.originalTitle,
+    title: article.originalTitle || titleFromSourceUrl(article.sourceUrl),
     content: article.originalContent,
     url: article.sourceUrl,
     categories,
   });
 
-  const html = result.faqHtml
-    ? `${result.html}\n<section class="faq">${result.faqHtml}</section>`
-    : result.html;
+  const html = mergeOriginalImages(
+    article.originalContent,
+    result.faqHtml ? `${result.html}\n<section class="faq">${result.faqHtml}</section>` : result.html
+  );
 
   const bloggerCategory = resolveCategory(result.category, categories);
 
@@ -244,6 +308,22 @@ async function handleRewrite(job: JobRow) {
 async function handleImages(job: JobRow) {
   const { articleId } = payloadOf(job) as { articleId: string };
   const article = await prisma.article.findUniqueOrThrow({ where: { id: articleId } });
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
+  } catch {
+    meta = {};
+  }
+  if (Boolean(meta.forcePublishNow)) {
+    delete meta.forcePublishNow;
+    await prisma.article.update({
+      where: { id: article.id },
+      data: { originalMeta: JSON.stringify(meta), status: "PUBLISHING" },
+    });
+    await enqueueBlogger(article.id, article.userId, null, { immediate: true });
+    return;
+  }
+
   const settings = await prisma.aiSettings.upsert({
     where: { userId: article.userId },
     update: {},
@@ -293,18 +373,8 @@ async function handleImages(job: JobRow) {
     ? `<p><img src="${featuredImageUrl}" alt="${title}" /></p>\n${article.rewrittenHtml}`
     : article.rewrittenHtml;
 
-  let meta: Record<string, unknown> = {};
-  try {
-    meta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
-  } catch {
-    meta = {};
-  }
   meta.pinterestImageUrls = pinUrls;
   meta.pinterestPinTypes = pinTypeOrder;
-  const forcePublishNow = Boolean(meta.forcePublishNow);
-  if (forcePublishNow) {
-    delete meta.forcePublishNow;
-  }
 
   await prisma.article.update({
     where: { id: article.id },
@@ -317,23 +387,23 @@ async function handleImages(job: JobRow) {
     },
   });
 
-  // Schedule Blogger publish for the next article time slot (server local), if configured.
-  // Publish now skips the slot and runs ASAP.
+  // Schedule Blogger publish for the next article time slot (GMT+5 wall clock), if configured.
   let bloggerAt: Date | null = null;
-  if (!forcePublishNow && article.bloggerBlogId) {
+  if (article.bloggerBlogId) {
     const blog = await prisma.bloggerBlog.findUnique({ where: { id: article.bloggerBlogId } });
     if (blog) {
       const articleTimes = parsePostTimes(settings.articlePostTimes);
       const slotIndex = isSameUtcDay(blog.publishedDay) ? blog.publishedToday : 0;
       bloggerAt = scheduledForSlot(articleTimes, slotIndex);
+      if (bloggerAt) {
+        await prisma.article.update({
+          where: { id: article.id },
+          data: { scheduledAt: bloggerAt },
+        });
+      }
     }
   }
-  await enqueueBlogger(
-    article.id,
-    article.userId,
-    bloggerAt,
-    forcePublishNow ? { immediate: true } : undefined
-  );
+  await enqueueBlogger(article.id, article.userId, bloggerAt);
 }
 
 async function handleBlogger(job: JobRow) {
@@ -350,7 +420,7 @@ async function handleBlogger(job: JobRow) {
   if (!article.bloggerBlog) {
     throw new Error("No Blogger blog assigned to article");
   }
-  if (!(await canPublishBlog(article.bloggerBlog.id))) {
+  if (!immediate && !(await canPublishBlog(article.bloggerBlog.id))) {
     throw new Error("Daily blog publish limit reached or blog disabled");
   }
 
@@ -378,11 +448,18 @@ async function handleBlogger(job: JobRow) {
   const labels = categoryLabel
     ? [categoryLabel]
     : parseTags(article.tags).slice(0, 5);
+  const content =
+    (article.rewrittenHtml && article.rewrittenHtml.trim()) ||
+    article.originalContent ||
+    "";
+  if (!content.trim()) {
+    throw new Error("No article HTML to publish");
+  }
   const post = await publishToBlogger({
     googleAccountId: article.bloggerBlog.googleAccountId,
     blogId: article.bloggerBlog.blogId,
     title: article.rewrittenTitle || article.originalTitle || "Untitled",
-    content: article.rewrittenHtml || "",
+    content,
     labels,
     isDraft,
   });
@@ -397,28 +474,41 @@ async function handleBlogger(job: JobRow) {
   });
 
   const mappedAccountId = article.bloggerBlog.pinterestMap?.pinterestAccountId;
-  if (!mappedAccountId) {
-    throw new Error(
-      "Blog is not paired with a Pinterest account. Save a Pinterest pair on the Blogger page before publishing."
-    );
+  const hasPinImage = Boolean(article.pinterestImageUrl);
+  let pinMeta: { pinterestImageUrls?: unknown } = {};
+  try {
+    pinMeta = article.originalMeta ? JSON.parse(article.originalMeta) : {};
+  } catch {
+    pinMeta = {};
   }
+  const pinUrls = Array.isArray(pinMeta.pinterestImageUrls)
+    ? pinMeta.pinterestImageUrls
+    : [];
+  const canPin = Boolean(mappedAccountId && (hasPinImage || pinUrls.length));
 
   await prisma.article.update({
     where: { id: article.id },
     data: {
       bloggerPostId: post.id || null,
       bloggerPostUrl: post.url || null,
-      pinterestAccountId: mappedAccountId,
+      pinterestAccountId: mappedAccountId || article.pinterestAccountId,
       publishedAt: new Date(),
-      status: "PINNING",
+      status: canPin ? "PINNING" : "COMPLETED",
+      errorMessage: canPin
+        ? null
+        : mappedAccountId
+          ? "Published to Blogger. Pins skipped (no pin images)."
+          : "Published to Blogger. Pins skipped (no Pinterest pair).",
     },
   });
 
-  // First pin uses the next global pin slot for today (server local).
+  if (!canPin) return;
+
+  // First pin uses the next global pin slot for today (GMT+5).
   // Publish now chains pins immediately.
   const ai = await prisma.aiSettings.findUnique({ where: { userId: article.userId } });
   const pinTimes = parsePostTimes(ai?.pinPostTimes);
-  const account = await prisma.pinterestAccount.findUnique({ where: { id: mappedAccountId } });
+  const account = await prisma.pinterestAccount.findUnique({ where: { id: mappedAccountId! } });
   const pinSlot = account && isSameUtcDay(account.pinsDay) ? account.pinsToday : 0;
   const pinAt = immediate ? null : scheduledForSlot(pinTimes, pinSlot);
   await enqueuePinterest(
@@ -577,6 +667,16 @@ async function handlePinterest(job: JobRow) {
     pinImageUrls = [article.pinterestImageUrl];
   }
   if (!pinImageUrls.length) {
+    if (article.bloggerPostUrl || article.bloggerPostId) {
+      await prisma.article.update({
+        where: { id: article.id },
+        data: {
+          status: "COMPLETED",
+          errorMessage: "Published to Blogger. Pins skipped (no pin images).",
+        },
+      });
+      return;
+    }
     throw new Error("Missing Pinterest image");
   }
 
@@ -765,6 +865,12 @@ async function enqueueDailyDiscoveredArticles() {
         scheduledFor = scheduledForSlot(articleTimes, slotIndex, now);
       }
       await enqueueExtract(article.id, blog.googleAccount.userId, scheduledFor);
+      if (scheduledFor) {
+        await prisma.article.update({
+          where: { id: article.id },
+          data: { scheduledAt: scheduledFor },
+        });
+      }
       enqueued += 1;
     }
   }

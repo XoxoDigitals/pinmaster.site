@@ -42,6 +42,11 @@ Length: ${settings.articleLength || "similar"}. SEO level: ${settings.seoLevel |
 
 ${categoryRule}
 
+Images (required):
+- The source HTML may contain comments like <!--CONTENT_IMAGE_0-->. Copy every such comment into "html" in the same relative place (or next to the rewritten paragraph it belonged to). Do not omit, renumber, or convert them to markdown.
+- Also keep any remaining <img>, <figure>, <picture>, and <a href="..."> image URLs. Do not strip images.
+- "html" must be HTML (not markdown). Include those image comments/tags in the body.
+
 Return ONLY valid JSON with keys: title, html, metaTitle, metaDescription, faqHtml, tags (string array), slug, category (string or null).`;
 }
 

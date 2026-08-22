@@ -3,6 +3,7 @@ import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
+import { humanizeSlug } from "./keyword-board";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -120,36 +121,92 @@ export async function fetchText(url: string): Promise<string> {
   return res.text();
 }
 
-export async function parseSitemapUrls(sitemapUrl: string): Promise<string[]> {
+function pickXmlString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value && typeof value === "object" && "loc" in (value as object)) {
+    return pickXmlString((value as { loc?: unknown }).loc);
+  }
+  if (value && typeof value === "object" && "#text" in (value as object)) {
+    return pickXmlString((value as { "#text"?: unknown })["#text"]);
+  }
+  return null;
+}
+
+export async function parseSitemapEntries(sitemapUrl: string): Promise<SitemapEntry[]> {
   const xml = await fetchText(sitemapUrl);
   const data = parser.parse(xml);
-  const urls: string[] = [];
+  const entries: SitemapEntry[] = [];
 
   const indexSitemaps = asArray(data.sitemapindex?.sitemap);
   if (indexSitemaps.length) {
     for (const entry of indexSitemaps) {
       const loc = typeof entry === "string" ? entry : entry.loc;
       if (loc) {
-        const nested = await parseSitemapUrls(loc);
-        urls.push(...nested);
+        const nested = await parseSitemapEntries(loc);
+        entries.push(...nested);
       }
     }
-    return [...new Set(urls)];
+    return dedupeSitemapEntries(entries);
   }
 
   const urlEntries = asArray(data.urlset?.url);
   for (const entry of urlEntries) {
-    const loc = typeof entry === "string" ? entry : entry.loc;
-    if (loc) urls.push(loc);
+    const loc = typeof entry === "string" ? entry : pickXmlString(entry?.loc);
+    if (!loc) continue;
+    const newsTitle = pickXmlString(entry?.["news:news"]?.["news:title"]);
+    const imageNodes = asArray(entry?.["image:image"] || entry?.image);
+    const images: string[] = [];
+    let imageTitle: string | null = null;
+    for (const img of imageNodes) {
+      const imageLoc = pickXmlString(img?.["image:loc"] || img?.loc);
+      if (imageLoc) images.push(imageLoc);
+      if (!imageTitle) imageTitle = pickXmlString(img?.["image:title"] || img?.title);
+    }
+    entries.push({
+      loc,
+      title: newsTitle || imageTitle,
+      images: [...new Set(images)],
+    });
   }
 
   const items = asArray(data.rss?.channel?.item);
   for (const item of items) {
-    if (item?.link) urls.push(item.link);
+    const loc = pickXmlString(item?.link);
+    if (!loc) continue;
+    const enclosure = item?.enclosure;
+    const enclosureUrl =
+      typeof enclosure === "object" ? pickXmlString(enclosure?.url) : null;
+    entries.push({
+      loc,
+      title: pickXmlString(item?.title),
+      images: enclosureUrl && isContentImageUrl(enclosureUrl) ? [enclosureUrl] : [],
+    });
   }
 
-  return [...new Set(urls)];
+  return dedupeSitemapEntries(entries);
 }
+
+function dedupeSitemapEntries(entries: SitemapEntry[]): SitemapEntry[] {
+  const seen = new Set<string>();
+  const out: SitemapEntry[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.loc)) continue;
+    seen.add(entry.loc);
+    out.push(entry);
+  }
+  return out;
+}
+
+export async function parseSitemapUrls(sitemapUrl: string): Promise<string[]> {
+  const listed = await parseSitemapEntries(sitemapUrl);
+  return listed.map((e) => e.loc);
+}
+
+export type SitemapEntry = {
+  loc: string;
+  title: string | null;
+  images: string[];
+};
 
 export type ExtractedArticle = {
   title: string;
@@ -160,6 +217,29 @@ export type ExtractedArticle = {
   tags: string[];
   featuredImage: string | null;
 };
+
+const IMAGE_EXT_RE = /\.(avif|bmp|gif|jpe?g|png|svg|webp|tiff?)(\?|#|$)/i;
+const SKIP_IMAGE_RE = /\b(sprite|icon|logo|avatar|pixel|tracking|1x1|spacer|badge|emoji)\b/i;
+const CONTENT_ROOT_SELECTORS = [
+  "article",
+  "[itemprop='articleBody']",
+  ".entry-content",
+  ".post-content",
+  ".post-body",
+  ".td-post-content",
+  ".article-content",
+  "main",
+  "[role='main']",
+].join(", ");
+
+export function isContentImageUrl(url: string): boolean {
+  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return false;
+  if (SKIP_IMAGE_RE.test(url)) return false;
+  if (IMAGE_EXT_RE.test(url)) return true;
+  if (/wp-content\/uploads/i.test(url)) return true;
+  if (/\/(media|images|photos|uploads)\//i.test(url)) return true;
+  return false;
+}
 
 function resolveUrl(baseUrl: string, maybeRelative: string | undefined | null): string | null {
   if (!maybeRelative) return null;
@@ -196,6 +276,10 @@ function pickBestImgSrc($: cheerio.CheerioAPI, el: Element, baseUrl: string): st
     $el.attr("data-src"),
     $el.attr("data-lazy-src"),
     $el.attr("data-original"),
+    $el.attr("data-lazy"),
+    $el.attr("data-bg"),
+    $el.attr("data-background"),
+    $el.attr("data-background-image"),
   ];
 
   for (const c of candidates) {
@@ -215,12 +299,26 @@ function pickBestImgSrc($: cheerio.CheerioAPI, el: Element, baseUrl: string): st
   return null;
 }
 
+function backgroundUrlFromStyle(style: string | undefined, baseUrl: string): string | null {
+  if (!style) return null;
+  const match = style.match(/url\(\s*['"]?([^'")]+)['"]?\s*\)/i);
+  return resolveUrl(baseUrl, match?.[1]);
+}
+
+function isContentImageHosted(src: string): boolean {
+  return Boolean(src.startsWith("http") && isContentImageUrl(src));
+}
+
 function collectImagesFromHtml(html: string, baseUrl: string): string[] {
   const $ = cheerio.load(html);
   const images: string[] = [];
   $("img").each((_, el) => {
     const src = pickBestImgSrc($, el, baseUrl);
     if (src && src.startsWith("http")) images.push(src);
+  });
+  $("a[href]").each((_, el) => {
+    const href = resolveUrl(baseUrl, $(el).attr("href"));
+    if (href && isContentImageHosted(href)) images.push(href);
   });
   return [...new Set(images)];
 }
@@ -246,18 +344,6 @@ function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
       continue;
     }
 
-    const allowed = KEEP_ATTRS[tag] || GLOBAL_ATTRS;
-    for (const name of Object.keys({ ...el.attribs })) {
-      const lower = name.toLowerCase();
-      if (lower.startsWith("on") || lower === "style") {
-        $el.removeAttr(name);
-        continue;
-      }
-      if (!allowed.has(lower) && !GLOBAL_ATTRS.has(lower)) {
-        $el.removeAttr(name);
-      }
-    }
-
     if (tag === "img") {
       const abs = pickBestImgSrc($, el, baseUrl);
       if (!abs) {
@@ -271,11 +357,6 @@ function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
       );
       if (srcset) $el.attr("srcset", srcset);
       else $el.removeAttr("srcset");
-      $el.removeAttr("data-src");
-      $el.removeAttr("data-lazy-src");
-      $el.removeAttr("data-original");
-      $el.removeAttr("data-srcset");
-      $el.removeAttr("data-lazy-srcset");
       if (!$el.attr("alt")) $el.attr("alt", "");
       $el.attr("loading", "lazy");
     }
@@ -290,6 +371,28 @@ function cleanArticleHtml(rawHtml: string, baseUrl: string): string {
     if (tag === "a") {
       const href = resolveUrl(baseUrl, $el.attr("href"));
       if (href) $el.attr("href", href);
+      if (href && isContentImageHosted(href) && !$el.find("img").length) {
+        $el.prepend(`<img src="${href}" alt="" loading="lazy" />`);
+      }
+    }
+
+    const bg =
+      backgroundUrlFromStyle($el.attr("style"), baseUrl) ||
+      resolveUrl(baseUrl, $el.attr("data-bg") || $el.attr("data-background") || $el.attr("data-background-image"));
+    if (bg && isContentImageHosted(bg) && !$el.find(`img[src="${bg}"]`).length && tag !== "img") {
+      $el.prepend(`<img src="${bg}" alt="" loading="lazy" />`);
+    }
+
+    const allowed = KEEP_ATTRS[tag] || GLOBAL_ATTRS;
+    for (const name of Object.keys({ ...el.attribs })) {
+      const lower = name.toLowerCase();
+      if (lower.startsWith("on") || lower === "style") {
+        $el.removeAttr(name);
+        continue;
+      }
+      if (!allowed.has(lower) && !GLOBAL_ATTRS.has(lower)) {
+        $el.removeAttr(name);
+      }
     }
   }
 
@@ -327,7 +430,37 @@ function ensureFeaturedInHtml(html: string, featuredImage: string | null, title:
   return `<figure><img src="${featuredImage}" alt="${alt}" loading="lazy" /></figure>\n${html}`;
 }
 
-export async function extractArticleContent(url: string): Promise<ExtractedArticle> {
+function collectImagesFromContentRoots($page: cheerio.CheerioAPI, baseUrl: string): string[] {
+  const $root = $page(CONTENT_ROOT_SELECTORS).first();
+  const scope = $root.length ? $root : $page("body");
+  const cloneHtml = cheerio.load(`<div id="c">${scope.html() || ""}</div>`);
+  cloneHtml("#c").find(JUNK_SELECTORS).remove();
+  return collectImagesFromHtml(cloneHtml("#c").html() || "", baseUrl);
+}
+
+function mergeMissingImages(html: string, urls: string[]): string {
+  let out = html;
+  for (const src of urls) {
+    if (!src || !src.startsWith("http") || out.includes(src)) continue;
+    out += `\n<figure><img src="${src}" alt="" loading="lazy" /></figure>`;
+  }
+  return out;
+}
+
+export function titleFromSourceUrl(url: string): string {
+  const fromSlug = humanizeSlug(url);
+  if (fromSlug && fromSlug !== "Untitled") return fromSlug;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+export async function extractArticleContent(
+  url: string,
+  extras?: { extraImages?: string[] }
+): Promise<ExtractedArticle> {
   const html = await fetchText(url);
   const dom = new JSDOM(html, { url });
   const reader = new Readability(dom.window.document, {
@@ -359,10 +492,11 @@ export async function extractArticleContent(url: string): Promise<ExtractedArtic
   });
 
   const title =
-    article?.title ||
-    $page('meta[property="og:title"]').attr("content") ||
+    $page('meta[property="og:title"]').attr("content")?.trim() ||
+    $page("h1").first().text().trim() ||
+    article?.title?.trim() ||
     $page("title").text().trim() ||
-    "Untitled";
+    titleFromSourceUrl(url);
 
   // Prefer Readability HTML; fall back to article/main/body.
   const rawContent =
@@ -374,11 +508,16 @@ export async function extractArticleContent(url: string): Promise<ExtractedArtic
     "";
 
   let content = cleanArticleHtml(rawContent, url);
+  const fromRoots = collectImagesFromContentRoots($page, url);
+  const extra = (extras?.extraImages || [])
+    .map((src) => resolveUrl(url, src))
+    .filter((src): src is string => Boolean(src && src.startsWith("http")));
+  content = mergeMissingImages(content, [...fromRoots, ...extra]);
+
   const images = collectImagesFromHtml(content, url);
   const featuredImage = extractFeaturedImage($page, url, images);
   content = ensureFeaturedInHtml(content, featuredImage, title);
 
-  // Re-collect after possible featured prepend.
   const allImages = collectImagesFromHtml(content, url);
   if (featuredImage && !allImages.includes(featuredImage)) {
     allImages.unshift(featuredImage);
@@ -389,7 +528,7 @@ export async function extractArticleContent(url: string): Promise<ExtractedArtic
     content,
     metaDescription,
     headings,
-    images: [...new Set(allImages)].slice(0, 40),
+    images: [...new Set(allImages)].slice(0, 80),
     tags: [...new Set(tags)].slice(0, 20),
     featuredImage,
   };
