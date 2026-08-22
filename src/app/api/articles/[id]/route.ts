@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseCategories } from "@/lib/blog-categories";
 import { deriveKeywordBoardName } from "@/lib/keyword-board";
 import { formatGmtPlus5, nextAssignedSlotUtc } from "@/lib/schedule";
-import { titleFromSourceUrl } from "@/lib/extract";
+import { titleFromSourceUrl, countHtmlImages } from "@/lib/extract";
 
 export async function GET(
   _req: NextRequest,
@@ -102,5 +102,19 @@ export async function GET(
     keywordBoardName: deriveKeywordBoardName({ ...article, originalTitle }),
     pinsPerArticle: settings?.pinsPerArticle ?? 1,
     paired: Boolean(article.bloggerBlog?.pinterestMap?.pinterestAccountId),
+    crawlDebug: {
+      htmlLength: article.originalContent?.length ?? 0,
+      imgTagCount: countHtmlImages(article.originalContent),
+      metaImageCount:
+        typeof originalMeta.imageCount === "number" ? originalMeta.imageCount : null,
+      metaImagesListed: Array.isArray(originalMeta.images)
+        ? originalMeta.images.filter((u): u is string => typeof u === "string").length
+        : 0,
+      featuredImage:
+        typeof originalMeta.featuredImage === "string" ? originalMeta.featuredImage : null,
+      imageUrls: Array.isArray(originalMeta.images)
+        ? originalMeta.images.filter((u): u is string => typeof u === "string" && u.startsWith("http"))
+        : [],
+    },
   });
 }

@@ -41,7 +41,20 @@ type ArticleDetail = {
     name: string;
     googleAccount?: { email: string };
   } | null;
-  originalMeta?: { pinterestImageUrls?: string[]; featuredImage?: string | null };
+  originalMeta?: {
+    pinterestImageUrls?: string[];
+    featuredImage?: string | null;
+    images?: string[];
+    imageCount?: number;
+  };
+  crawlDebug?: {
+    htmlLength: number;
+    imgTagCount: number;
+    metaImageCount: number | null;
+    metaImagesListed: number;
+    featuredImage: string | null;
+    imageUrls: string[];
+  };
 };
 
 export default function ArticleDetailPage() {
@@ -55,6 +68,7 @@ export default function ArticleDetailPage() {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [showCrawlDebug, setShowCrawlDebug] = useState(false);
 
   const load = useCallback(async () => {
     if (!articleId) return;
@@ -102,6 +116,8 @@ export default function ArticleDetailPage() {
       setMessage(
         action === "rewrite"
           ? "Rewrite queued"
+          : action === "extract"
+            ? "Re-crawl queued — fresh HTML from source URL"
           : action === "publish_now"
             ? "Publish started — posting to Blogger"
             : action === "schedule"
@@ -339,6 +355,139 @@ export default function ArticleDetailPage() {
           </Panel>
         </div>
       )}
+
+      <Panel style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <p style={{ margin: 0, fontWeight: 700 }}>Crawl debug</p>
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink-soft)" }}>
+              Raw stored HTML from the last crawl/extract. Works for any site — no URLs are hardcoded
+              in the crawler.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={btnGhost}
+              disabled={Boolean(busy)}
+              onClick={() => runAction("extract")}
+            >
+              {busy === "extract" ? "Queuing…" : "Re-crawl source"}
+            </button>
+            <button
+              type="button"
+              style={btnGhost}
+              onClick={() => setShowCrawlDebug((v) => !v)}
+            >
+              {showCrawlDebug ? "Hide crawl HTML" : "Show crawl HTML"}
+            </button>
+          </div>
+        </div>
+
+        {article.crawlDebug && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+              gap: 8,
+              marginTop: 14,
+              fontSize: 12,
+            }}
+          >
+            <div>
+              <span style={{ color: "var(--ink-soft)" }}>HTML size</span>
+              <br />
+              <strong>{article.crawlDebug.htmlLength.toLocaleString()} chars</strong>
+            </div>
+            <div>
+              <span style={{ color: "var(--ink-soft)" }}>&lt;img&gt; in HTML</span>
+              <br />
+              <strong>{article.crawlDebug.imgTagCount}</strong>
+            </div>
+            <div>
+              <span style={{ color: "var(--ink-soft)" }}>Meta imageCount</span>
+              <br />
+              <strong>{article.crawlDebug.metaImageCount ?? "—"}</strong>
+            </div>
+            <div>
+              <span style={{ color: "var(--ink-soft)" }}>Meta image URLs</span>
+              <br />
+              <strong>{article.crawlDebug.metaImagesListed}</strong>
+            </div>
+          </div>
+        )}
+
+        {showCrawlDebug && (
+          <>
+            {article.crawlDebug?.featuredImage && (
+              <p style={{ margin: "12px 0 0", fontSize: 12 }}>
+                <span style={{ color: "var(--ink-soft)" }}>Featured URL: </span>
+                <a
+                  href={article.crawlDebug.featuredImage}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--pin)", wordBreak: "break-all" }}
+                >
+                  {article.crawlDebug.featuredImage}
+                </a>
+              </p>
+            )}
+
+            {article.crawlDebug?.imageUrls?.length ? (
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                  Extracted image URLs ({article.crawlDebug.imageUrls.length})
+                </summary>
+                <ol
+                  style={{
+                    margin: "8px 0 0",
+                    paddingLeft: 20,
+                    fontSize: 11,
+                    maxHeight: 160,
+                    overflow: "auto",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {article.crawlDebug.imageUrls.map((url) => (
+                    <li key={url} style={{ marginBottom: 4 }}>
+                      <a href={url} target="_blank" rel="noreferrer" style={{ color: "var(--pin)" }}>
+                        {url}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            ) : null}
+
+            <p style={{ margin: "12px 0 6px", fontSize: 12, fontWeight: 600 }}>
+              Stored crawl HTML (originalContent)
+            </p>
+            {article.originalContent ? (
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 12,
+                  maxHeight: 360,
+                  overflow: "auto",
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                  background: "var(--paper-2, #f6f6f4)",
+                  border: "1px solid var(--line, #e5e5e0)",
+                  borderRadius: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {article.originalContent}
+              </pre>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: "var(--ink-soft)" }}>
+                No crawl HTML yet — click Re-crawl source or wait for sitemap extract.
+              </p>
+            )}
+          </>
+        )}
+      </Panel>
 
       {showPinPreview && (
         <Panel>
